@@ -1792,17 +1792,17 @@ def emit_recovery_summary(
                     enabled=use_color,
                 )
             )
-        if summary.get("destroy_command"):
-            lines.append(
-                format_key_value(
-                    "Destroy",
-                    str(summary["destroy_command"]),
-                    key_color=YELLOW,
-                    key_bold=True,
-                    delim_dim=True,
-                    enabled=use_color,
-                )
+    if summary.get("destroy_command"):
+        lines.append(
+            format_key_value(
+                "Destroy",
+                str(summary["destroy_command"]),
+                key_color=YELLOW,
+                key_bold=True,
+                delim_dim=True,
+                enabled=use_color,
             )
+        )
     return "\n".join(lines)
 
 

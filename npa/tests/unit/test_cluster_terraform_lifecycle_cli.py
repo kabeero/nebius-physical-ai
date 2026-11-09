@@ -4446,4 +4446,3 @@ def test_cluster_lifecycle_output_styling(capsys, monkeypatch) -> None:
     tf_mod._echo_cluster_field("Cluster ID", "cluster-xyz")
     out = capsys.readouterr().out
     assert "\033[1m\033[36mCluster ID\033[0m\033[2m:\033[0m cluster-xyz\n" in out
-

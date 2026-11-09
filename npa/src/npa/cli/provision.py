@@ -239,52 +239,93 @@ def provision_if_absent_cmd(
                 "status",
                 result.status,
                 key_color=CYAN,
-                value_color=GREEN if result.status == "ok" else (YELLOW if result.status == "partial" else ""),
+                value_color=GREEN
+                if result.status == "ok"
+                else (YELLOW if result.status == "partial" else ""),
                 enabled=use_color,
             ),
             color=use_color,
         )
         typer.echo(
-            format_key_value("project", str(result.project), key_color=CYAN, enabled=use_color),
+            format_key_value(
+                "project", str(result.project), key_color=CYAN, enabled=use_color
+            ),
             color=use_color,
         )
         typer.echo(
-            format_key_value("cluster", str(result.cluster_name), key_color=CYAN, enabled=use_color),
+            format_key_value(
+                "cluster", str(result.cluster_name), key_color=CYAN, enabled=use_color
+            ),
             color=use_color,
         )
         typer.echo(
-            format_key_value("kubeconfig", str(result.kubeconfig_path), key_color=CYAN, enabled=use_color),
+            format_key_value(
+                "kubeconfig",
+                str(result.kubeconfig_path),
+                key_color=CYAN,
+                enabled=use_color,
+            ),
             color=use_color,
         )
         typer.echo(
-            format_key_value("storage", str(result.storage_bucket), key_color=CYAN, enabled=use_color),
+            format_key_value(
+                "storage", str(result.storage_bucket), key_color=CYAN, enabled=use_color
+            ),
             color=use_color,
         )
         typer.echo(
-            format_key_value("gpu_readiness", str(result.gpu_readiness), key_color=CYAN, enabled=use_color),
+            format_key_value(
+                "gpu_readiness",
+                str(result.gpu_readiness),
+                key_color=CYAN,
+                enabled=use_color,
+            ),
             color=use_color,
         )
         if result.operation_id:
             typer.echo(
-                format_key_value("operation_id", str(result.operation_id), key_color=CYAN, enabled=use_color),
+                format_key_value(
+                    "operation_id",
+                    str(result.operation_id),
+                    key_color=CYAN,
+                    enabled=use_color,
+                ),
                 color=use_color,
             )
             typer.echo(
-                format_key_value("operation_journal", str(result.operation_journal), key_color=CYAN, enabled=use_color),
+                format_key_value(
+                    "operation_journal",
+                    str(result.operation_journal),
+                    key_color=CYAN,
+                    enabled=use_color,
+                ),
                 color=use_color,
             )
             typer.echo(
-                format_key_value("recovery_command", str(result.recovery_command), key_color=CYAN, enabled=use_color),
+                format_key_value(
+                    "recovery_command",
+                    str(result.recovery_command),
+                    key_color=CYAN,
+                    enabled=use_color,
+                ),
                 color=use_color,
             )
         for action in result.actions:
             typer.echo(
-                format_key_value("action", str(action), key_color=CYAN, enabled=use_color),
+                format_key_value(
+                    "action", str(action), key_color=CYAN, enabled=use_color
+                ),
                 color=use_color,
             )
         for warning in result.warnings:
             typer.echo(
-                format_key_value("warning", str(warning), key_color=CYAN, value_color=YELLOW, enabled=use_color),
+                format_key_value(
+                    "warning",
+                    str(warning),
+                    key_color=CYAN,
+                    value_color=YELLOW,
+                    enabled=use_color,
+                ),
                 color=use_color,
             )
         if result.status == "ok" and result.kubeconfig_path and not dry_run:

@@ -102,4 +102,7 @@ def test_format_key_value_with_value_style() -> None:
         value_color=RED,
         enabled=True,
     )
-    assert formatted == f"{BOLD}{RED}Primary failure{RESET}{DIM}:{RESET} {RED}Error: failed{RESET}"
+    assert (
+        formatted
+        == f"{BOLD}{RED}Primary failure{RESET}{DIM}:{RESET} {RED}Error: failed{RESET}"
+    )

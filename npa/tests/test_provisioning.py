@@ -1171,15 +1171,21 @@ def test_provision_if_absent_cli_color_output_formatting(mocker) -> None:
     )
     mocker.patch("npa.cli.provision.supports_color", return_value=True)
 
-    result = runner.invoke(app, ["provision-if-absent", "--project", "proj"], color=True)
+    result = runner.invoke(
+        app, ["provision-if-absent", "--project", "proj"], color=True
+    )
 
     assert result.exit_code == 0
     assert result.output.startswith("\n")
     # Bold cyan status header and bold green 'ok' value
-    assert "\033[1m\033[36mstatus\033[0m\033[2m:\033[0m \033[32mok\033[0m" in result.output
+    assert (
+        "\033[1m\033[36mstatus\033[0m\033[2m:\033[0m \033[32mok\033[0m" in result.output
+    )
     # Bold cyan warning header and yellow warning value
-    assert "\033[1m\033[36mwarning\033[0m\033[2m:\033[0m \033[33mquota low\033[0m" in result.output
-
+    assert (
+        "\033[1m\033[36mwarning\033[0m\033[2m:\033[0m \033[33mquota low\033[0m"
+        in result.output
+    )
 
 
 def test_provision_blocks_kubernetes_when_storage_reconciliation_fails(

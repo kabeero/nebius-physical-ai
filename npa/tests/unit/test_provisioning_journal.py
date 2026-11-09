@@ -812,7 +812,10 @@ def test_emit_recovery_summary_colored(journal_root: Path) -> None:
     # Bold yellow Provisioning operation and dim colon
     assert "\033[1m\033[33mProvisioning operation\033[0m\033[2m:\033[0m " in rendered
     # Bold red Primary failure, dim colon, and red value
-    assert "\033[1m\033[31mPrimary failure\033[0m\033[2m:\033[0m \033[31mRuntimeError: quota exceeded\033[0m" in rendered
+    assert (
+        "\033[1m\033[31mPrimary failure\033[0m\033[2m:\033[0m \033[31mRuntimeError: quota exceeded\033[0m"
+        in rendered
+    )
 
 
 def test_emit_recovery_summary_json_no_leading_newline(journal_root: Path) -> None:
@@ -822,3 +825,13 @@ def test_emit_recovery_summary_json_no_leading_newline(journal_root: Path) -> No
     data = json.loads(rendered)
     assert "operation_id" in data
 
+
+def test_emit_recovery_summary_keeps_destroy_line_without_rollback(
+    journal_root: Path,
+) -> None:
+    operation = _prepare(resource_type="cluster", requested_name="fail-destroy")
+    operation.record_failure(RuntimeError("primary sanitized failure"))
+    rendered = emit_recovery_summary(operation, color=False)
+    assert "Primary failure: RuntimeError: primary sanitized failure" in rendered
+    # No rollback was recorded, but the destroy command must still be shown.
+    assert "Destroy: npa agent destroy --project prod --name agent --yes" in rendered
