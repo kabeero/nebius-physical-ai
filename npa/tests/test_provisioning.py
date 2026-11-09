@@ -1124,6 +1124,64 @@ def test_provision_if_absent_cli_prints_the_kubeconfig_export(mocker) -> None:
     )
 
 
+def test_provision_if_absent_cli_text_output_formatting(mocker) -> None:
+    from npa.cli.main import app
+
+    mocker.patch(
+        "npa.cli.provision.provision_if_absent",
+        return_value=provisioning.ProvisionIfAbsentResult(
+            status="ok",
+            project="proj",
+            cluster_name="npa-cluster",
+            kubeconfig_path="/home/op/.npa/clusters/npa-cluster/kubeconfig",
+            storage_bucket="s3://test-bucket/",
+            gpu_readiness="not-requested",
+            operation_id="op-123",
+            operation_journal="/path/journal.json",
+            recovery_command="npa provision-if-absent --resume",
+            actions=["k8s:ensured"],
+            warnings=["quota low"],
+        ),
+    )
+
+    result = runner.invoke(app, ["provision-if-absent", "--project", "proj"])
+
+    assert result.exit_code == 0
+    # Must have leading blank line
+    assert result.output.startswith("\n")
+    # In non-TTY test runner, color is disabled, so keys/values are plain
+    assert "\033[" not in result.output
+    assert "status: ok" in result.output
+    assert "project: proj" in result.output
+    assert "storage: s3://test-bucket/" in result.output
+    assert "warning: quota low" in result.output
+
+
+def test_provision_if_absent_cli_color_output_formatting(mocker) -> None:
+    from npa.cli.main import app
+
+    mocker.patch(
+        "npa.cli.provision.provision_if_absent",
+        return_value=provisioning.ProvisionIfAbsentResult(
+            status="ok",
+            project="proj",
+            cluster_name="npa-cluster",
+            warnings=["quota low"],
+        ),
+    )
+    mocker.patch("npa.cli.provision.supports_color", return_value=True)
+
+    result = runner.invoke(app, ["provision-if-absent", "--project", "proj"], color=True)
+
+    assert result.exit_code == 0
+    assert result.output.startswith("\n")
+    # Bold cyan status header and bold green 'ok' value
+    assert "\033[1m\033[36mstatus\033[0m\033[2m:\033[0m \033[32mok\033[0m" in result.output
+    # Bold cyan warning header and yellow warning value
+    assert "\033[1m\033[36mwarning\033[0m\033[2m:\033[0m \033[33mquota low\033[0m" in result.output
+
+
+
 def test_provision_blocks_kubernetes_when_storage_reconciliation_fails(
     tmp_path, monkeypatch, mocker
 ) -> None:
