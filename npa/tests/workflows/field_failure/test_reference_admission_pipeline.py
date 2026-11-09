@@ -52,6 +52,9 @@ class MemoryStorage:
 
 @pytest.fixture
 def baseline_publication(tmp_path, monkeypatch):
+    # prepare_warehouse builds a real USD scene; usd-core ships no
+    # linux/aarch64 wheels, so skip before the fixture does any work.
+    pytest.importorskip("pxr")
     from npa.workflows.field_failure.reference_demo_inputs import prepare_warehouse
 
     storage = MemoryStorage({})

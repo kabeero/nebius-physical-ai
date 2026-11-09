@@ -111,6 +111,7 @@ def _scene(tmp_path):
 def test_native_material_declaration_is_explicit_and_does_not_allow_other_missing_assets(
     tmp_path, native_library
 ):
+    pytest.importorskip("pxr")
     root, request = _scene(tmp_path)
     with pytest.raises(ValueError, match="absent from the hashed"):
         _check_scene_files(root, request)
@@ -127,6 +128,7 @@ def test_native_material_declaration_is_explicit_and_does_not_allow_other_missin
 
 @pytest.mark.parametrize("name", ["OmniPBR.mdl", "omnipbr.mdl"])
 def test_scene_cannot_shadow_declared_native_module(tmp_path, native_library, name):
+    pytest.importorskip("pxr")
     root, request = _scene(tmp_path)
     request["runtime_materials"] = materials._reference_materials(root)
     shadow = root / "nested" / name
@@ -138,6 +140,7 @@ def test_scene_cannot_shadow_declared_native_module(tmp_path, native_library, na
 
 
 def test_reference_does_not_treat_unknown_mdl_as_native(tmp_path, native_library):
+    pytest.importorskip("pxr")
     root, request = _scene(tmp_path)
     layer = root / "material.usda"
     layer.write_text(layer.read_text().replace("OmniPBR.mdl", "Unknown.mdl"))
@@ -149,6 +152,8 @@ def test_native_verification_precedes_kit_stage_open(
     tmp_path, native_library, monkeypatch
 ):
     import sys
+
+    pytest.importorskip("pxr")
     from npa.workflows.isaac_rgbd import runtime
 
     root, request = _scene(tmp_path)
@@ -167,6 +172,7 @@ def test_native_verification_precedes_kit_stage_open(
 def test_nested_package_cannot_shadow_declared_native_module(tmp_path, native_library):
     import zipfile
 
+    pytest.importorskip("pxr")
     root, request = _scene(tmp_path)
     request["runtime_materials"] = materials._reference_materials(root)
     inner = root / "inner.usdz"

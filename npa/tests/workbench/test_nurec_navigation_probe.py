@@ -231,6 +231,7 @@ def test_report_binds_exact_provenance_and_operator_image_scope(mocked_bundle):
     Raises:
         AssertionError: Evidence misses provenance bytes or overclaims image identity.
     """
+    pytest.importorskip("pxr")
     root, published = mocked_bundle
     path = root / "provenance.json"
     first = probe_module._verify_and_publish(str(root), "unused-output", IMAGE)
@@ -263,6 +264,7 @@ def test_provenance_swap_during_query_prevents_publication(mocked_bundle, monkey
     Raises:
         AssertionError: Swapped provenance produces a successful report.
     """
+    pytest.importorskip("pxr")
     root, published = mocked_bundle
 
     def swap_provenance(scene, provenance):

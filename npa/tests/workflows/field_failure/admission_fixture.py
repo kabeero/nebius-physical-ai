@@ -5,6 +5,7 @@ import shutil
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from npa.workflows.navigation import control_protocol as controls
 from npa.workflows.navigation.artifacts import _files, file_sha256, write_json
@@ -14,6 +15,9 @@ from npa.workflows.navigation.probe_evidence import save_trace
 
 
 def build_observation(tmp_path, monkeypatch):
+    # Builds a real USD warehouse scene; usd-core ships no linux/aarch64
+    # wheels, so consuming tests skip before any fixture work runs.
+    pytest.importorskip("pxr")
     from npa.workflows.field_failure.reference_demo_inputs import prepare_warehouse
 
     root = tmp_path / "observation"
