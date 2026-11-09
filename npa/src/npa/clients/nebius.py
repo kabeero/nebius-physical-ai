@@ -529,6 +529,31 @@ def current_tenant_id() -> str:
     return _config_get("tenant-id")
 
 
+# The Nebius CLI accepts exactly these parent-ID resource types for tenants;
+# anything else (most commonly a tenant *name* saved as a profile annotation)
+# is rejected by provider APIs with a confusing InvalidArgument.
+_TENANT_ID_RE = re.compile(
+    r"^(?:tenant|aitenant|tractotenant)-[a-z0-9]+(?:-[a-z0-9]+)*$"
+)
+
+
+def is_tenant_id(text: str) -> bool:
+    """Return whether *text* is a tenant resource ID, not a tenant name.
+
+    A tenant name (for example ``my-tenant-name``) saved as a profile's
+    ``tenant-id`` is silently accepted by the CLI and only fails later as an
+    opaque provider ``InvalidArgument`` during quota reads.
+
+    Args:
+        text: Candidate tenant identifier, optionally surrounded by whitespace.
+    Returns:
+        True when *text* matches a supported tenant resource-ID type.
+    Raises:
+        None.
+    """
+    return bool(_TENANT_ID_RE.match(str(text or "").strip()))
+
+
 def _write_profile_value(key: str, value: str) -> None:
     command = ["config", "set", key, value] if value else ["config", "unset", key]
     _run(command)
@@ -576,7 +601,9 @@ def set_profile_project(project_id: str, tenant_id: str = "") -> ProfileMutation
 
     Args:
         project_id: Project to set as the active profile's parent.
-        tenant_id: Optional tenant to set on the active profile.
+        tenant_id: Optional tenant to set on the active profile. A value that
+            is not a tenant resource ID (``is_tenant_id``) is skipped rather
+            than written; callers validate earlier.
     Returns:
         A typed result; compare explicitly with ProfileMutationResult.UPDATED.
     Raises:
@@ -587,7 +614,7 @@ def set_profile_project(project_id: str, tenant_id: str = "") -> ProfileMutation
     if not project:
         return ProfileMutationResult.UNCHANGED
     updates = {"parent-id": project}
-    if tenant:
+    if tenant and is_tenant_id(tenant):
         updates["tenant-id"] = tenant
     try:
         previous = _read_profile_values(tuple(updates))

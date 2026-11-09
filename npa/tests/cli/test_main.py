@@ -1126,6 +1126,44 @@ def test_interactive_profile_binding_reports_recovery_state(
     assert expected in capsys.readouterr().out
 
 
+def test_resolve_discovery_tenant_ignores_malformed_profile_annotation(
+    capsys,
+) -> None:
+    client = SimpleNamespace(
+        current_tenant_id=lambda: "my-tenant-name",
+        current_project_id=lambda: "project-synthetic",
+        get_project_tenant_id=lambda _project: "tenant-0123456789abcdefgh",
+        list_tenants=lambda: [],
+    )
+
+    tenant_id, skip_reason = cli_main._resolve_discovery_tenant(
+        client, lambda *_args, **_kwargs: "1"
+    )
+
+    assert tenant_id == "tenant-0123456789abcdefgh"
+    assert skip_reason == ""
+    output = capsys.readouterr().out
+    assert "is not a tenant resource ID" in output
+    assert "my-tenant-name" in output
+
+
+def test_resolve_discovery_tenant_trusts_well_formed_profile_annotation() -> None:
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("a valid profile tenant-id must short-circuit discovery")
+
+    client = SimpleNamespace(
+        current_tenant_id=lambda: "tenant-0123456789abcdefgh",
+        current_project_id=forbidden,
+        get_project_tenant_id=forbidden,
+        list_tenants=forbidden,
+    )
+
+    tenant_id, skip_reason = cli_main._resolve_discovery_tenant(client, forbidden)
+
+    assert tenant_id == "tenant-0123456789abcdefgh"
+    assert skip_reason == ""
+
+
 def _stub_noninteractive_profile_binding(monkeypatch, tmp_path, mutation_result):
     import npa.clients.nebius as nebius_module
 

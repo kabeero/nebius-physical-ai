@@ -34,13 +34,15 @@ def _point_configure_at_tmp(
     return config_path, credentials_path
 
 
-def _known_project_args(*, provision: bool) -> list[str]:
+def _known_project_args(
+    *, provision: bool, tenant_id: str = "tenant-synthetic"
+) -> list[str]:
     return [
         "configure",
         "--no-interactive",
         "--provision" if provision else "--no-provision",
         "--tenant-id",
-        "tenant-synthetic",
+        tenant_id,
         "--project-id",
         "project-synthetic",
         "--region",
@@ -117,6 +119,22 @@ def test_known_project_no_provision_is_provider_free_and_deselects_old_storage(
     assert root["current_project_id"] == "project-synthetic"
     assert root["projects"]["project-synthetic"]["storage_selected"] is False
     assert "old-synthetic-bucket" not in result.output
+
+
+def test_known_project_configure_rejects_tenant_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path, credentials_path = _point_configure_at_tmp(monkeypatch, tmp_path)
+
+    result = runner.invoke(
+        app, _known_project_args(provision=False, tenant_id="my-tenant-name")
+    )
+
+    assert result.exit_code == 2
+    assert "is not a tenant resource ID" in result.output
+    assert "nebius iam v2 tenant list" in result.output
+    assert not config_path.exists()
+    assert not credentials_path.exists()
 
 
 def test_known_project_no_provision_disables_retained_exact_project_storage(

@@ -250,6 +250,12 @@ npa configure --no-interactive --no-provision \
   --region "$NEBIUS_REGION" --project-alias "$PROJECT_ALIAS"
 ```
 
+`--tenant-id` must be a tenant resource ID (for example `tenant-…`; the CLI
+also accepts `aitenant-`/`tractotenant-` types), never the tenant's display
+name — a name is rejected at configure time, and would otherwise fail much
+later as an opaque provider error. List your tenant IDs with
+`nebius iam v2 tenant list`.
+
 This is provider-free project configuration. Add `--provision` to the same
 command only when it should also create or reuse verified writable storage.
 
