@@ -742,6 +742,92 @@ def test_show_accepts_harmless_no_interactive_flag() -> None:
     assert "Current configuration" in result.output
 
 
+def _write_single_project_config(config_path: Path) -> None:
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    "fresh": {
+                        "tenant_id": "tenant-synthetic",
+                        "project_id": "project-synthetic",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_configure_show_summary_stays_plain_without_a_tty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path, _ = _point_configure_at_tmp(monkeypatch, tmp_path)
+    _write_single_project_config(config_path)
+
+    result = runner.invoke(app, ["configure", "--show"])
+
+    assert result.exit_code == 0, result.output
+    # Leading blank line separates the block, as on provision-if-absent.
+    assert result.output.startswith("\n")
+    # Non-TTY output never carries ANSI styling.
+    assert "\033[" not in result.output
+    # The padded pre-styling layout is preserved byte-for-byte.
+    assert "  project alias:      fresh" in result.output
+    assert "  project id:         project-synthetic" in result.output
+    assert "  tenant id:          tenant-synthetic" in result.output
+    assert "  region:             (unset)" in result.output
+    assert "  HF token:           not set" in result.output
+
+
+def test_configure_show_summary_is_styled_on_a_tty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path, credentials_path = _point_configure_at_tmp(monkeypatch, tmp_path)
+    _write_single_project_config(config_path)
+    credentials_path.write_text(
+        yaml.safe_dump({"tokens": {"HF_TOKEN": "hf_synthetic_secret"}}),
+        encoding="utf-8",
+    )
+    credentials_path.chmod(0o600)
+    monkeypatch.setattr(cli_main, "supports_color", lambda stream: True)
+
+    result = runner.invoke(app, ["configure", "--show"], color=True)
+
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("\n")
+    # Bold cyan header.
+    assert "\033[1m\033[36mCurrent configuration\033[0m" in result.output
+    # Bold cyan label, plain value, dim alias hint.
+    assert (
+        "\033[1m\033[36m  project alias:     \033[0m "
+        "fresh\033[2m  (use with -p)\033[0m" in result.output
+    )
+    # Missing values render yellow.
+    assert (
+        "\033[1m\033[36m  region:            \033[0m \033[33m(unset)\033[0m"
+        in result.output
+    )
+    # Present values render green.
+    assert "\033[1m\033[36m  HF token:          \033[0m \033[32mset\033[0m" in (
+        result.output
+    )
+
+
+def test_configure_show_env_output_is_never_styled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path, _ = _point_configure_at_tmp(monkeypatch, tmp_path)
+    _write_single_project_config(config_path)
+    monkeypatch.setattr(cli_main, "supports_color", lambda stream: True)
+
+    result = runner.invoke(app, ["configure", "--show", "--env"], color=True)
+
+    assert result.exit_code == 0, result.output
+    assert "NPA_PROJECT_ALIAS=fresh" in result.stdout
+    # NPA_* assignments are eval'd by runbooks; they stay byte-plain even on a TTY.
+    assert "\033[" not in result.stdout
+
+
 def test_configure_help_describes_provider_free_and_explicit_provision_intent() -> None:
     result = runner.invoke(app, ["configure", "--help"], terminal_width=200)
 
