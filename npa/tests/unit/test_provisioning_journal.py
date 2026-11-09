@@ -792,3 +792,33 @@ def test_concurrent_private_store_updates_do_not_overwrite_fields(
     saved = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert saved == {f"field_{index}": f"value_{index}" for index in range(24)}
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_emit_recovery_summary_plain_has_leading_newline(journal_root: Path) -> None:
+    operation = _prepare(resource_type="cluster", requested_name="fail-plain")
+    operation.record_failure(RuntimeError("quota exceeded"))
+    rendered = emit_recovery_summary(operation, color=False)
+    assert rendered.startswith("\n")
+    assert "Provisioning operation: " in rendered
+    assert "Primary failure: RuntimeError: quota exceeded" in rendered
+    assert "\033[" not in rendered
+
+
+def test_emit_recovery_summary_colored(journal_root: Path) -> None:
+    operation = _prepare(resource_type="cluster", requested_name="fail-color")
+    operation.record_failure(RuntimeError("quota exceeded"))
+    rendered = emit_recovery_summary(operation, color=True)
+    assert rendered.startswith("\n")
+    # Bold yellow Provisioning operation and dim colon
+    assert "\033[1m\033[33mProvisioning operation\033[0m\033[2m:\033[0m " in rendered
+    # Bold red Primary failure, dim colon, and red value
+    assert "\033[1m\033[31mPrimary failure\033[0m\033[2m:\033[0m \033[31mRuntimeError: quota exceeded\033[0m" in rendered
+
+
+def test_emit_recovery_summary_json_no_leading_newline(journal_root: Path) -> None:
+    operation = _prepare(resource_type="cluster", requested_name="json-check")
+    rendered = emit_recovery_summary(operation, output_json=True)
+    assert not rendered.startswith("\n")
+    data = json.loads(rendered)
+    assert "operation_id" in data
+
