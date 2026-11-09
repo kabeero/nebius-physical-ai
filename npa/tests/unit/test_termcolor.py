@@ -1,8 +1,5 @@
 """Tests for npa.termcolor terminal styling and capability detection."""
 
-import os
-import sys
-from io import StringIO
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,7 +8,6 @@ from npa.termcolor import (
     BOLD,
     CYAN,
     DIM,
-    GREEN,
     RED,
     RESET,
     YELLOW,
