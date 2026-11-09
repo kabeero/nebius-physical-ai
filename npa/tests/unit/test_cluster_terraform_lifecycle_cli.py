@@ -4431,3 +4431,19 @@ def test_preflight_ordinary_on_demand_sufficient_passes(monkeypatch) -> None:
         "nebius", _strict_preflight_tfvars(mig=False, block=False), {}
     )
     assert any("quota-allowance" in a for a in seen)
+
+
+def test_cluster_lifecycle_output_styling(capsys, monkeypatch) -> None:
+    # Test plain output
+    monkeypatch.setattr(tf_mod, "supports_color", lambda stream: False)
+    tf_mod._echo_cluster_field("Cluster ID", "cluster-xyz")
+    out = capsys.readouterr().out
+    assert "Cluster ID: cluster-xyz\n" == out
+    assert "\033[" not in out
+
+    # Test color output
+    monkeypatch.setattr(tf_mod, "supports_color", lambda stream: True)
+    tf_mod._echo_cluster_field("Cluster ID", "cluster-xyz")
+    out = capsys.readouterr().out
+    assert "\033[1m\033[36mCluster ID\033[0m\033[2m:\033[0m cluster-xyz\n" in out
+

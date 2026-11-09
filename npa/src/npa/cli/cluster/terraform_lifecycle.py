@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -77,6 +78,7 @@ from npa.orchestration.skypilot.cluster_validation import (
     current_validation_session,
     validation_session,
 )
+from npa.termcolor import CYAN, format_key_value, supports_color
 
 _DEFAULT_TERRAFORM_SUBDIR = Path("deploy") / "cluster"
 _DEFAULT_SKYPILOT_BIN = Path.home() / ".npa" / "skypilot-venv" / "bin" / "sky"
@@ -99,6 +101,21 @@ def _redacted_exception_message(prefix: str, exc: BaseException) -> str:
     from npa.clients.nebius import redact_nebius_output
 
     return redact_nebius_output(f"{prefix}: {type(exc).__name__}: {exc}")
+
+
+def _echo_cluster_field(key: str, value: str, *, enabled: bool | None = None) -> None:
+    """Echo a ``key: value`` cluster summary line, colored on a TTY.
+
+    Plain rendering is byte-identical to ``f"{key}: {value}"`` so non-TTY,
+    CI, and ``NO_COLOR`` consumers (including substring assertions in the
+    test suite) see the same text as before.
+    """
+
+    use_color = enabled if enabled is not None else supports_color(sys.stdout)
+    typer.echo(
+        format_key_value(key, value, key_color=CYAN, enabled=use_color),
+        color=use_color,
+    )
 
 
 def _transactional_cluster_up(function):
@@ -831,16 +848,16 @@ def up_cmd(
                     str(result.get("error") or "shared mk8s backend apply failed")
                 )
             kubeconfig_path = Path(str(result["kubeconfig"]))
-            typer.echo(f"Cluster ID: {result['cluster_id']}")
-            typer.echo(f"Cluster name: {backend_desired.name}")
-            typer.echo(f"Kubeconfig: {kubeconfig_path}")
+            _echo_cluster_field("Cluster ID", str(result["cluster_id"]))
+            _echo_cluster_field("Cluster name", str(backend_desired.name))
+            _echo_cluster_field("Kubeconfig", str(kubeconfig_path))
             if validate:
                 basics = result.get("cluster_basics") or {}
-                typer.echo(
-                    "Validation: "
+                _echo_cluster_field(
+                    "Validation",
                     f"{basics.get('ready_nodes', 0)} Ready nodes, "
                     f"default StorageClass "
-                    f"{basics.get('default_storage_class', 'unknown')}"
+                    f"{basics.get('default_storage_class', 'unknown')}",
                 )
             else:
                 typer.echo(
@@ -1101,9 +1118,9 @@ def up_cmd(
             last_seen_state="VALIDATING",
         )
 
-        typer.echo(f"Cluster ID: {cluster_id}")
-        typer.echo(f"Cluster name: {cluster_name}")
-        typer.echo(f"Kubeconfig: {kubeconfig_path}")
+        _echo_cluster_field("Cluster ID", str(cluster_id))
+        _echo_cluster_field("Cluster name", str(cluster_name))
+        _echo_cluster_field("Kubeconfig", str(kubeconfig_path))
 
         if mig_desired is not None:
             typer.echo("Waiting for exact two-snapshot MIG convergence...")
@@ -1118,10 +1135,10 @@ def up_cmd(
                     gpu_health_verifier=validate_gpu_health,
                 ),
             )
-            typer.echo(
-                "MIG validation: "
+            _echo_cluster_field(
+                "MIG validation",
                 f"{verification['verified_nodes']} reserved workers with exact "
-                "partition resources"
+                "partition resources",
             )
 
         if validate and mig_desired is None:
@@ -1137,11 +1154,11 @@ def up_cmd(
                 gpu_graphics_smoke_image=gpu_graphics_smoke_image,
                 env=env,
             )
-            typer.echo(
-                "Validation: "
+            _echo_cluster_field(
+                "Validation",
                 f"{validation['ready_nodes']} Ready nodes, "
                 f"{validation['total_gpus']} allocatable GPUs, "
-                f"default StorageClass {validation['default_storage_class']}"
+                f"default StorageClass {validation['default_storage_class']}",
             )
         if sky_smoke and mig_desired is None:
             _validate_skypilot_readiness(
@@ -2168,9 +2185,9 @@ def kubeconfig_cmd(
         kubeconfig_path,
         env=env,
     )
-    typer.echo(f"Cluster ID: {cluster_id}")
-    typer.echo(f"Kubeconfig: {kubeconfig_path}")
-    typer.echo(f"Context: {context}")
+    _echo_cluster_field("Cluster ID", str(cluster_id))
+    _echo_cluster_field("Kubeconfig", str(kubeconfig_path))
+    _echo_cluster_field("Context", str(context))
     typer.echo(
         f"Submit against it with `--infra k8s/{context}` (npa resolves this file), "
         f"or export KUBECONFIG={kubeconfig_path} for kubectl."
