@@ -777,6 +777,10 @@ def test_configure_show_summary_stays_plain_without_a_tty(
     assert "  tenant id:          tenant-synthetic" in result.output
     assert "  region:             (unset)" in result.output
     assert "  HF token:           not set" in result.output
+    # Guidance comments and runnable commands render byte-plain without a TTY.
+    assert "  # Hugging Face access token" in result.output
+    assert "chmod 600 ~/.npa/credentials.yaml" in result.output
+    assert "chmod 700 ~/.npa && chmod 600 ~/.npa/config.yaml" in result.output
 
 
 def test_configure_show_summary_is_styled_on_a_tty(
@@ -826,6 +830,53 @@ def test_configure_show_env_output_is_never_styled(
     assert "NPA_PROJECT_ALIAS=fresh" in result.stdout
     # NPA_* assignments are eval'd by runbooks; they stay byte-plain even on a TTY.
     assert "\033[" not in result.stdout
+
+
+def test_configure_show_guidance_is_styled_on_a_tty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path, _ = _point_configure_at_tmp(monkeypatch, tmp_path)
+    _write_single_project_config(config_path)
+    monkeypatch.setattr(cli_main, "supports_color", lambda stream: True)
+
+    result = runner.invoke(app, ["configure", "--show"], color=True)
+
+    assert result.exit_code == 0, result.output
+    # Bold cyan title and YAML section keys.
+    assert "\033[1m\033[36mCredential setup\033[0m" in result.output
+    assert "\033[1m\033[36mtokens:\033[0m" in result.output
+    assert "\033[1m\033[36mstorage:\033[0m" in result.output
+    # Whole-line comments render dim.
+    assert (
+        "\033[2m  # Hugging Face access token (for model + dataset downloads, "
+        "incl. gated repos).\033[0m" in result.output
+    )
+    # A trailing explanation renders dim after the key it documents.
+    assert (
+        "NEBIUS_TOKEN_FACTORY_KEY: <paste-your-token-factory-api-key>"
+        "\033[2m  # e.g. v1.XXXXXXXX...\033[0m" in result.output
+    )
+    # Runnable shell lines render bold green.
+    assert "\033[1m\033[32mchmod 600 ~/.npa/credentials.yaml\033[0m" in result.output
+    assert (
+        "\033[1m\033[32mchmod 700 ~/.npa && chmod 600 ~/.npa/config.yaml\033[0m"
+        in result.output
+    )
+
+
+def test_configure_guidance_mode_is_styled_on_a_tty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path, _ = _point_configure_at_tmp(monkeypatch, tmp_path)
+    _write_single_project_config(config_path)
+    monkeypatch.setattr(cli_main, "supports_color", lambda stream: True)
+
+    result = runner.invoke(app, ["configure"], color=True)
+
+    assert result.exit_code == 0, result.output
+    # The bare non-interactive `npa configure` guidance path styles too.
+    assert "\033[1m\033[36mCredential setup\033[0m" in result.output
+    assert "\033[2m  # Hugging Face access token" in result.output
 
 
 def test_configure_help_describes_provider_free_and_explicit_provision_intent() -> None:

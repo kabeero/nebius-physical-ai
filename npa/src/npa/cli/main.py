@@ -463,6 +463,53 @@ chmod 700 ~/.npa && chmod 600 ~/.npa/config.yaml
 """
 
 
+def _style_guidance_line(line: str) -> str:
+    """Return one ``_SETUP_GUIDANCE`` line with its kind-based styling.
+
+    Rules, matched in order: whole-line ``#`` comments render dim, YAML section
+    keys (a single lowercase identifier ending in ``:``) render bold cyan, and
+    runnable shell lines (currently the ``chmod`` security fixes) render bold
+    green. A trailing ``#`` explanation after two spaces renders dim while the
+    key it documents keeps its default rendering.
+    """
+    if line.lstrip().startswith("#"):
+        return style(line, dim=True)
+    if (
+        line.endswith(":")
+        and " " not in line
+        and line[:-1].isidentifier()
+        and line[:-1].islower()
+    ):
+        return style(line, color=CYAN, bold=True)
+    if line.startswith("chmod "):
+        return style(line, color=GREEN, bold=True)
+    code, separator, comment = line.partition("  #")
+    if separator and comment:
+        return f"{code}{style(separator + comment, dim=True)}"
+    return line
+
+
+def _styled_setup_guidance(*, enabled: bool = False) -> str:
+    """Return ``_SETUP_GUIDANCE`` with TTY styling applied line by line.
+
+    The title renders bold cyan; every other line is classified by
+    ``_style_guidance_line``. Plain rendering returns the raw text unchanged so
+    non-TTY, CI, and NO_COLOR consumers (including substring assertions in the
+    test suite) see the same bytes as before.
+    """
+    if not enabled:
+        return _SETUP_GUIDANCE
+    lines = _SETUP_GUIDANCE.split("\n")
+    title = style(lines[0], color=CYAN, bold=True)
+    return "\n".join([title, *(_style_guidance_line(line) for line in lines[1:])])
+
+
+def _echo_setup_guidance() -> None:
+    """Echo the credential-setup guidance, styled when stdout is a TTY."""
+    use_color = supports_color(sys.stdout)
+    typer.echo(_styled_setup_guidance(enabled=use_color), color=use_color)
+
+
 def _version_callback(value: bool) -> None:
     if not value:
         return
@@ -3170,7 +3217,7 @@ def _configure_impl(
         else:
             _echo_configure_summary()
             typer.echo("")
-            typer.echo(_SETUP_GUIDANCE)
+            _echo_setup_guidance()
         return
     if mode == ConfigureMode.IMPORT_CREDENTIALS:
         machine_output = env_output
@@ -3210,7 +3257,7 @@ def _configure_impl(
             "Credential environment sources detected: none; persistence: none.",
         )
     if mode == ConfigureMode.GUIDANCE:
-        typer.echo(_SETUP_GUIDANCE)
+        _echo_setup_guidance()
         return
     try:
         _run_interactive_configure(
