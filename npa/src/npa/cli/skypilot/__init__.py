@@ -872,9 +872,38 @@ def _verify_kube_env(
     if resolved is None and cluster:
         from npa.cluster.state import kubeconfig_file
 
-        resolved = kubeconfig_file(cluster)
+        try:
+            direct = kubeconfig_file(cluster)
+            if direct.exists():
+                resolved = direct
+        except Exception:
+            pass
+        if resolved is None:
+            try:
+                from npa.cluster.state import existing_kubeconfig
+
+                candidate = existing_kubeconfig(cluster)
+                if candidate is not None and candidate.exists():
+                    resolved = candidate
+            except Exception:
+                pass
+        if resolved is None:
+            raw_default = os.environ.get("KUBECONFIG", "").strip()
+            resolved = (
+                Path(raw_default).expanduser()
+                if raw_default
+                else (Path.home() / ".kube" / "config")
+            )
     if resolved is None:
         return None, str(cluster or "").strip()
+    if os.pathsep in str(resolved) and owned_target:
+        from npa.orchestration.skypilot.cluster_validation import (
+            resolve_validation_target,
+        )
+
+        resolved, exact_context = resolve_validation_target(
+            resolved, str(cluster or "").strip()
+        )
     resolved = resolved.expanduser()
     if not resolved.exists():
         raise RuntimeError(
