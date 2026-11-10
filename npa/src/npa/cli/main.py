@@ -51,6 +51,7 @@ from npa.provisioning_journal import (
     operation_context,
 )
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
+from npa.termcolor import CYAN, GREEN, YELLOW, style, supports_color
 
 logger = logging.getLogger(__name__)
 
@@ -460,6 +461,53 @@ repo. If you ever see the permissions warning:
 
 chmod 700 ~/.npa && chmod 600 ~/.npa/config.yaml
 """
+
+
+def _style_guidance_line(line: str) -> str:
+    """Return one ``_SETUP_GUIDANCE`` line with its kind-based styling.
+
+    Rules, matched in order: whole-line ``#`` comments render dim, YAML section
+    keys (a single lowercase identifier ending in ``:``) render bold cyan, and
+    runnable shell lines (currently the ``chmod`` security fixes) render bold
+    green. A trailing ``#`` explanation after two spaces renders dim while the
+    key it documents keeps its default rendering.
+    """
+    if line.lstrip().startswith("#"):
+        return style(line, dim=True)
+    if (
+        line.endswith(":")
+        and " " not in line
+        and line[:-1].isidentifier()
+        and line[:-1].islower()
+    ):
+        return style(line, color=CYAN, bold=True)
+    if line.startswith("chmod "):
+        return style(line, color=GREEN, bold=True)
+    code, separator, comment = line.partition("  #")
+    if separator and comment:
+        return f"{code}{style(separator + comment, dim=True)}"
+    return line
+
+
+def _styled_setup_guidance(*, enabled: bool = False) -> str:
+    """Return ``_SETUP_GUIDANCE`` with TTY styling applied line by line.
+
+    The title renders bold cyan; every other line is classified by
+    ``_style_guidance_line``. Plain rendering returns the raw text unchanged so
+    non-TTY, CI, and NO_COLOR consumers (including substring assertions in the
+    test suite) see the same bytes as before.
+    """
+    if not enabled:
+        return _SETUP_GUIDANCE
+    lines = _SETUP_GUIDANCE.split("\n")
+    title = style(lines[0], color=CYAN, bold=True)
+    return "\n".join([title, *(_style_guidance_line(line) for line in lines[1:])])
+
+
+def _echo_setup_guidance() -> None:
+    """Echo the credential-setup guidance, styled when stdout is a TTY."""
+    use_color = supports_color(sys.stdout)
+    typer.echo(_styled_setup_guidance(enabled=use_color), color=use_color)
 
 
 def _version_callback(value: bool) -> None:
@@ -2432,7 +2480,69 @@ def _configured_project_id() -> str:
         return ""
 
 
-def _configured_summary() -> str:
+def _configure_summary_line(
+    label: str,
+    value: str,
+    *,
+    enabled: bool = False,
+    suffix: str = "",
+) -> str:
+    """Format one padded ``label: value`` line of the configure --show summary.
+
+    Plain rendering is byte-identical to ``f"  {label + ':':<19} {value}{suffix}"``
+    so non-TTY, CI, and NO_COLOR consumers see the same text as before. When
+    enabled, the label renders bold cyan, missing values (``(unset)`` /
+    ``not set``) render yellow, ``set`` renders green, and the suffix renders dim.
+    """
+    padded = f"  {label + ':':<19}"
+    if not enabled:
+        return f"{padded} {value}{suffix}"
+    styled_label = style(padded, color=CYAN, bold=True)
+    if value in {"(unset)", "not set"}:
+        value_color = YELLOW
+    elif value == "set":
+        value_color = GREEN
+    else:
+        value_color = ""
+    styled_value = style(value, color=value_color) if value_color else value
+    styled_suffix = style(suffix, dim=True) if suffix else suffix
+    return f"{styled_label} {styled_value}{styled_suffix}"
+
+
+def _credentials_summary_lines(
+    credentials: Any,
+    credentials_path: str,
+    *,
+    enabled: bool,
+) -> list[str]:
+    """Return the credential-file lines of the configure --show summary.
+
+    Secrets are reported as ``set`` / ``not set``, never echoed.
+    """
+    lines = [
+        _configure_summary_line("credentials file", credentials_path, enabled=enabled),
+        _configure_summary_line(
+            "s3 bucket", str(credentials.s3_bucket or "(unset)"), enabled=enabled
+        ),
+        _configure_summary_line(
+            "s3 endpoint", str(credentials.s3_endpoint or "(unset)"), enabled=enabled
+        ),
+    ]
+    for label, value in (
+        ("s3 access key", credentials.s3_access_key_id),
+        ("HF token", credentials.hf_token),
+        ("Token Factory key", credentials.token_factory_api_key),
+        ("NGC API key", credentials.ngc_api_key),
+    ):
+        lines.append(
+            _configure_summary_line(
+                label, "set" if value else "not set", enabled=enabled
+            )
+        )
+    return lines
+
+
+def _configured_summary(*, enabled: bool = False) -> str:
     """Return the resolved ~/.npa values a first run needs to fill in placeholders.
 
     `configure --show` used to print only the empty file template, so an operator
@@ -2443,8 +2553,13 @@ def _configured_summary() -> str:
     from npa.clients.config import CONFIG_PATH, default_project_name, list_projects
     from npa.clients.credentials import CREDENTIALS_PATH, load_credentials
 
-    lines: list[str] = ["Current configuration"]
-    projects = {}
+    header = (
+        style("Current configuration", color=CYAN, bold=True)
+        if enabled
+        else "Current configuration"
+    )
+    lines: list[str] = [header]
+    projects: dict = {}
     alias = ""
     try:
         projects = list_projects()
@@ -2452,16 +2567,27 @@ def _configured_summary() -> str:
     except Exception:  # noqa: BLE001 - a broken config must still print the layout
         projects = {}
     if not projects:
-        lines.append(f"  (no projects in {CONFIG_PATH} — run `npa configure`)")
+        empty = f"  (no projects in {CONFIG_PATH} — run `npa configure`)"
+        lines.append(style(empty, color=YELLOW) if enabled else empty)
         return "\n".join(lines)
 
     stanza = projects.get(alias) or next(iter(projects.values()))
     resolved_alias = alias if alias in projects else next(iter(projects))
-    lines.append(f"  config file:        {CONFIG_PATH}")
-    lines.append(f"  project alias:      {resolved_alias}  (use with -p)")
+    lines.append(
+        _configure_summary_line("config file", str(CONFIG_PATH), enabled=enabled)
+    )
+    lines.append(
+        _configure_summary_line(
+            "project alias", resolved_alias, enabled=enabled, suffix="  (use with -p)"
+        )
+    )
     if len(projects) > 1:
         lines.append(
-            f"  other aliases:      {', '.join(a for a in projects if a != resolved_alias)}"
+            _configure_summary_line(
+                "other aliases",
+                ", ".join(name for name in projects if name != resolved_alias),
+                enabled=enabled,
+            )
         )
     for label, key in (
         ("project id", "project_id"),
@@ -2469,24 +2595,32 @@ def _configured_summary() -> str:
         ("region", "region"),
     ):
         value = str((stanza or {}).get(key, "") or "")
-        lines.append(f"  {label + ':':<19} {value or '(unset)'}")
+        lines.append(
+            _configure_summary_line(label, value or "(unset)", enabled=enabled)
+        )
 
     try:
         credentials = load_credentials(environ={})
     except Exception:  # noqa: BLE001 - report what is readable
         credentials = None
     if credentials is not None:
-        lines.append(f"  credentials file:   {CREDENTIALS_PATH}")
-        lines.append(f"  s3 bucket:          {credentials.s3_bucket or '(unset)'}")
-        lines.append(f"  s3 endpoint:        {credentials.s3_endpoint or '(unset)'}")
-        for label, value in (
-            ("s3 access key", credentials.s3_access_key_id),
-            ("HF token", credentials.hf_token),
-            ("Token Factory key", credentials.token_factory_api_key),
-            ("NGC API key", credentials.ngc_api_key),
-        ):
-            lines.append(f"  {label + ':':<19} {'set' if value else 'not set'}")
+        lines.extend(
+            _credentials_summary_lines(
+                credentials, str(CREDENTIALS_PATH), enabled=enabled
+            )
+        )
     return "\n".join(lines)
+
+
+def _echo_configure_summary() -> None:
+    """Echo the resolved ~/.npa summary block, styled when stdout is a TTY.
+
+    A leading blank line separates the block from preceding diagnostics, as on
+    ``provision-if-absent``.
+    """
+    use_color = supports_color(sys.stdout)
+    typer.echo("")
+    typer.echo(_configured_summary(enabled=use_color), color=use_color)
 
 
 def _forget_project(alias: str) -> None:
@@ -3078,18 +3212,22 @@ def _configure_impl(
                 err=env_output,
             )
         if env_output:
+            # NPA_* assignments are eval'd by runbooks; never style them.
             typer.echo(_configured_env_lines())
         else:
-            typer.echo(_configured_summary())
+            _echo_configure_summary()
             typer.echo("")
-            typer.echo(_SETUP_GUIDANCE)
+            _echo_setup_guidance()
         return
     if mode == ConfigureMode.IMPORT_CREDENTIALS:
         machine_output = env_output
         persist_environment_credentials(diagnostics_to_stderr=machine_output)
         typer.echo(_saved_model_access_note(), err=machine_output)
         if show or env_output:
-            typer.echo(_configured_env_lines() if env_output else _configured_summary())
+            if env_output:
+                typer.echo(_configured_env_lines())
+            else:
+                _echo_configure_summary()
         return
     if mode == ConfigureMode.KNOWN_PROJECT:
         if save_env_credentials:
@@ -3119,7 +3257,7 @@ def _configure_impl(
             "Credential environment sources detected: none; persistence: none.",
         )
     if mode == ConfigureMode.GUIDANCE:
-        typer.echo(_SETUP_GUIDANCE)
+        _echo_setup_guidance()
         return
     try:
         _run_interactive_configure(

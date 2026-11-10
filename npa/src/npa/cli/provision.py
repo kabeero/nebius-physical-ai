@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from enum import Enum
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from npa.cluster.gpu_health import (
 )
 from npa.provisioning import provision_if_absent
 from npa.orchestration.skypilot.local_api import IsolatedApiError
+from npa.termcolor import CYAN, GREEN, YELLOW, format_key_value, supports_color
 
 app = typer.Typer(
     name="provision-if-absent",
@@ -230,20 +232,102 @@ def provision_if_absent_cmd(
     if output_format == OutputFormat.json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        typer.echo(f"status: {result.status}")
-        typer.echo(f"project: {result.project}")
-        typer.echo(f"cluster: {result.cluster_name}")
-        typer.echo(f"kubeconfig: {result.kubeconfig_path}")
-        typer.echo(f"storage: {result.storage_bucket}")
-        typer.echo(f"gpu_readiness: {result.gpu_readiness}")
+        use_color = supports_color(sys.stdout)
+        typer.echo("")
+        typer.echo(
+            format_key_value(
+                "status",
+                result.status,
+                key_color=CYAN,
+                value_color=GREEN
+                if result.status == "ok"
+                else (YELLOW if result.status == "partial" else ""),
+                enabled=use_color,
+            ),
+            color=use_color,
+        )
+        typer.echo(
+            format_key_value(
+                "project", str(result.project), key_color=CYAN, enabled=use_color
+            ),
+            color=use_color,
+        )
+        typer.echo(
+            format_key_value(
+                "cluster", str(result.cluster_name), key_color=CYAN, enabled=use_color
+            ),
+            color=use_color,
+        )
+        typer.echo(
+            format_key_value(
+                "kubeconfig",
+                str(result.kubeconfig_path),
+                key_color=CYAN,
+                enabled=use_color,
+            ),
+            color=use_color,
+        )
+        typer.echo(
+            format_key_value(
+                "storage", str(result.storage_bucket), key_color=CYAN, enabled=use_color
+            ),
+            color=use_color,
+        )
+        typer.echo(
+            format_key_value(
+                "gpu_readiness",
+                str(result.gpu_readiness),
+                key_color=CYAN,
+                enabled=use_color,
+            ),
+            color=use_color,
+        )
         if result.operation_id:
-            typer.echo(f"operation_id: {result.operation_id}")
-            typer.echo(f"operation_journal: {result.operation_journal}")
-            typer.echo(f"recovery_command: {result.recovery_command}")
+            typer.echo(
+                format_key_value(
+                    "operation_id",
+                    str(result.operation_id),
+                    key_color=CYAN,
+                    enabled=use_color,
+                ),
+                color=use_color,
+            )
+            typer.echo(
+                format_key_value(
+                    "operation_journal",
+                    str(result.operation_journal),
+                    key_color=CYAN,
+                    enabled=use_color,
+                ),
+                color=use_color,
+            )
+            typer.echo(
+                format_key_value(
+                    "recovery_command",
+                    str(result.recovery_command),
+                    key_color=CYAN,
+                    enabled=use_color,
+                ),
+                color=use_color,
+            )
         for action in result.actions:
-            typer.echo(f"action: {action}")
+            typer.echo(
+                format_key_value(
+                    "action", str(action), key_color=CYAN, enabled=use_color
+                ),
+                color=use_color,
+            )
         for warning in result.warnings:
-            typer.echo(f"warning: {warning}")
+            typer.echo(
+                format_key_value(
+                    "warning",
+                    str(warning),
+                    key_color=CYAN,
+                    value_color=YELLOW,
+                    enabled=use_color,
+                ),
+                color=use_color,
+            )
         if result.status == "ok" and result.kubeconfig_path and not dry_run:
             # The kubeconfig is written outside ~/.kube/config. `npa workbench
             # workflow submit --infra k8s/<context>` finds it on its own; kubectl

@@ -28,6 +28,8 @@ import threading
 import time
 from typing import Any
 
+from npa.termcolor import RED, YELLOW, format_key_value, supports_color
+
 
 SCHEMA_VERSION = "npa.provisioning.operation.v2"
 PROJECT_LEASE_SCHEMA_VERSION = "npa.project.lifecycle-lease.v1"
@@ -1691,46 +1693,117 @@ def operation_context(
 
 
 def emit_recovery_summary(
-    operation: ProvisioningOperation, *, output_json: bool = False
+    operation: ProvisioningOperation,
+    *,
+    output_json: bool = False,
+    color: bool | None = None,
 ) -> str:
     """Return and optionally print the deterministic recovery information."""
 
     summary = operation.recovery_summary()
     if output_json:
-        rendered = json.dumps(summary, indent=2, sort_keys=True)
-    else:
-        states = ", ".join(summary["local_state"]) or "none yet"
-        rendered = (
-            f"Provisioning operation: {summary['operation_id']}\n"
-            f"Durable journal: {summary['journal']}\n"
-            f"Preserved local Terraform state: {states}\n"
-            f"Resume: {summary['resume_command']}"
+        return json.dumps(summary, indent=2, sort_keys=True)
+
+    use_color = color if color is not None else supports_color(sys.stderr)
+    states = ", ".join(summary["local_state"]) or "none yet"
+    lines = [
+        "",
+        format_key_value(
+            "Provisioning operation",
+            str(summary["operation_id"]),
+            key_color=YELLOW,
+            key_bold=True,
+            delim_dim=True,
+            enabled=use_color,
+        ),
+        format_key_value(
+            "Durable journal",
+            str(summary["journal"]),
+            key_color=YELLOW,
+            key_bold=True,
+            delim_dim=True,
+            enabled=use_color,
+        ),
+        format_key_value(
+            "Preserved local Terraform state",
+            states,
+            key_color=YELLOW,
+            key_bold=True,
+            delim_dim=True,
+            enabled=use_color,
+        ),
+        format_key_value(
+            "Resume",
+            str(summary["resume_command"]),
+            key_color=YELLOW,
+            key_bold=True,
+            delim_dim=True,
+            enabled=use_color,
+        ),
+    ]
+    if summary.get("last_error"):
+        error_val = (
+            f"{summary.get('last_error_type') or 'ProvisioningError'}: "
+            f"{summary['last_error']}"
         )
-        if summary.get("last_error"):
-            rendered += (
-                "\nPrimary failure: "
-                f"{summary.get('last_error_type') or 'ProvisioningError'}: "
-                f"{summary['last_error']}"
+        lines.append(
+            format_key_value(
+                "Primary failure",
+                error_val,
+                key_color=RED,
+                key_bold=True,
+                delim_dim=True,
+                value_color=RED,
+                enabled=use_color,
             )
-        rollback = summary.get("rollback") or {}
-        if rollback:
-            rendered += (
-                "\nRollback: attempted="
-                f"{bool(rollback.get('attempted'))}, completed="
-                f"{bool(rollback.get('completed'))}, resources_removed="
-                f"{len(rollback.get('resources_removed') or [])}"
+        )
+    rollback = summary.get("rollback") or {}
+    if rollback:
+        rollback_val = (
+            f"attempted={bool(rollback.get('attempted'))}, "
+            f"completed={bool(rollback.get('completed'))}, "
+            f"resources_removed={len(rollback.get('resources_removed') or [])}"
+        )
+        lines.append(
+            format_key_value(
+                "Rollback",
+                rollback_val,
+                key_color=YELLOW,
+                key_bold=True,
+                delim_dim=True,
+                enabled=use_color,
             )
-            outcomes = rollback.get("resource_outcomes") or []
-            if outcomes:
-                rendered += "\nRollback outcomes: " + ", ".join(
-                    f"{item.get('resource_type', 'resource')}:"
-                    f"{item.get('provider_id', item.get('requested_name', '?'))}="
-                    f"{item.get('outcome', 'unknown')}"
-                    for item in outcomes
+        )
+        outcomes = rollback.get("resource_outcomes") or []
+        if outcomes:
+            outcomes_val = ", ".join(
+                f"{item.get('resource_type', 'resource')}:"
+                f"{item.get('provider_id', item.get('requested_name', '?'))}="
+                f"{item.get('outcome', 'unknown')}"
+                for item in outcomes
+            )
+            lines.append(
+                format_key_value(
+                    "Rollback outcomes",
+                    outcomes_val,
+                    key_color=YELLOW,
+                    key_bold=True,
+                    delim_dim=True,
+                    enabled=use_color,
                 )
-        if summary.get("destroy_command"):
-            rendered += f"\nDestroy: {summary['destroy_command']}"
-    return rendered
+            )
+    if summary.get("destroy_command"):
+        lines.append(
+            format_key_value(
+                "Destroy",
+                str(summary["destroy_command"]),
+                key_color=YELLOW,
+                key_bold=True,
+                delim_dim=True,
+                enabled=use_color,
+            )
+        )
+    return "\n".join(lines)
 
 
 __all__ = [
