@@ -152,6 +152,43 @@ def existing_kubeconfig(name: str, *, base_dir: Path | None = None) -> Path | No
     return None
 
 
+def resolve_cluster_kubeconfig(
+    name: str | None = None,
+    explicit_path: Path | str | None = None,
+    *,
+    base_dir: Path | None = None,
+) -> Path | None:
+    """Resolve a kubeconfig path from an explicit file, cluster name, or default environment."""
+    if explicit_path is not None:
+        return Path(explicit_path).expanduser()
+    target = str(name or "").strip()
+    if target:
+        try:
+            direct = (
+                kubeconfig_file(target, base_dir=base_dir)
+                if base_dir is not None
+                else kubeconfig_file(target)
+            )
+            if direct.exists():
+                return direct
+        except Exception:
+            pass
+        try:
+            candidate = (
+                existing_kubeconfig(target, base_dir=base_dir)
+                if base_dir is not None
+                else existing_kubeconfig(target)
+            )
+            if candidate is not None and candidate.exists():
+                return candidate
+        except Exception:
+            pass
+    raw_default = os.environ.get("KUBECONFIG", "").strip()
+    if raw_default:
+        return Path(raw_default).expanduser()
+    return Path.home() / ".kube" / "config"
+
+
 def node_groups_dir(cluster_name: str, *, base_dir: Path | None = None) -> Path:
     return cluster_dir(cluster_name, base_dir=base_dir) / "node-groups"
 

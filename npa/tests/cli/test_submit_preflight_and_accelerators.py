@@ -955,6 +955,238 @@ def test_workflow_gpus_explicit_cluster_wins_over_ambient_context(
     }
 
 
+def test_workflow_gpus_with_cluster_loads_default_kubeconfig_when_flag_omitted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    default_kubeconfig = tmp_path / "ambient-kubeconfig"
+    default_kubeconfig.write_text(
+        "apiVersion: v1\ncurrent-context: ambient-cluster\n"
+        "contexts:\n- name: ambient-cluster\n  context: {cluster: ambient}\n"
+        "clusters:\n- name: ambient\n  cluster: {server: 'https://kubernetes.invalid'}\n"
+    )
+    monkeypatch.setenv("KUBECONFIG", str(default_kubeconfig))
+    seen: dict[str, str] = {}
+
+    def discover_inventory(*, context: str, kubeconfig: Path):
+        seen["inventory_context"] = context
+        seen["inventory_kubeconfig"] = str(kubeconfig)
+        return type(
+            "Inventory",
+            (),
+            {
+                "to_dict": lambda self: {},
+                "ready_nodes": 0,
+                "eligible_gpu_nodes": 0,
+                "capacity": 0,
+                "allocatable": 0,
+                "products": (),
+            },
+        )()
+
+    def discover_catalog(*, context: str, kubeconfig: Path, sky_bin: str):
+        seen["catalog_context"] = context
+        return KubernetesGpuCatalog({}, context=context)
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        discover_inventory,
+    )
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_recorded_controller_owner", lambda: None
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_catalog",
+        discover_catalog,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--cluster",
+            "ambient-cluster",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["inventory_context"] == "ambient-cluster"
+    assert seen["inventory_kubeconfig"] == str(default_kubeconfig)
+
+
+def test_workflow_gpus_with_cluster_prefers_npa_cluster_kubeconfig_if_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    default_kubeconfig = tmp_path / "ambient-kubeconfig"
+    default_kubeconfig.write_text(
+        "apiVersion: v1\ncurrent-context: ambient-cluster\n"
+        "contexts:\n- name: ambient-cluster\n  context: {cluster: ambient}\n"
+        "clusters:\n- name: ambient\n  cluster: {server: 'https://kubernetes.invalid'}\n"
+    )
+    monkeypatch.setenv("KUBECONFIG", str(default_kubeconfig))
+
+    npa_kubeconfig = tmp_path / "npa-cluster-kube.yaml"
+    npa_kubeconfig.write_text(
+        "apiVersion: v1\ncurrent-context: my-npa-cluster\n"
+        "contexts:\n- name: my-npa-cluster\n  context: {cluster: npa}\n"
+        "clusters:\n- name: npa\n  cluster: {server: 'https://kubernetes.invalid'}\n"
+    )
+    monkeypatch.setattr(
+        "npa.cluster.state.existing_kubeconfig",
+        lambda name: npa_kubeconfig if name == "my-npa-cluster" else None,
+    )
+    seen: dict[str, str] = {}
+
+    def discover_inventory(*, context: str, kubeconfig: Path):
+        seen["inventory_context"] = context
+        seen["inventory_kubeconfig"] = str(kubeconfig)
+        return type(
+            "Inventory",
+            (),
+            {
+                "to_dict": lambda self: {},
+                "ready_nodes": 0,
+                "eligible_gpu_nodes": 0,
+                "capacity": 0,
+                "allocatable": 0,
+                "products": (),
+            },
+        )()
+
+    def discover_catalog(*, context: str, kubeconfig: Path, sky_bin: str):
+        seen["catalog_context"] = context
+        return KubernetesGpuCatalog({}, context=context)
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        discover_inventory,
+    )
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_recorded_controller_owner", lambda: None
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_catalog",
+        discover_catalog,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--cluster",
+            "my-npa-cluster",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["inventory_context"] == "my-npa-cluster"
+    assert seen["inventory_kubeconfig"] == str(npa_kubeconfig)
+
+
+def test_workflow_gpus_with_invalid_cluster_provides_actionable_suggestions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    kubeconfig = tmp_path / "kube.yaml"
+    kubeconfig.write_text(
+        "apiVersion: v1\ncurrent-context: valid-ctx-1\n"
+        "contexts:\n- name: valid-ctx-1\n  context: {cluster: valid-cluster}\n"
+        "clusters:\n- name: valid-cluster\n  cluster: {server: 'https://kubernetes.invalid'}\n"
+    )
+    monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--cluster",
+            "nonexistent-cluster",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert (
+        "Kubeconfig or exact context is missing, ambiguous, or invalid" in result.output
+    )
+    assert "nebius mk8s cluster list" in result.output
+    assert "kubectl config get-contexts" in result.output
+    assert "nebius mk8s cluster get-credentials" in result.output
+    assert "typo" in result.output.lower()
+    assert "valid-ctx-1" in result.output
+
+
+def test_workflow_gpus_with_explicit_kubeconfig_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    custom_kubeconfig = tmp_path / "custom-kube.yaml"
+    custom_kubeconfig.write_text(
+        "apiVersion: v1\ncurrent-context: custom-cluster\n"
+        "contexts:\n- name: custom-cluster\n  context: {cluster: custom}\n"
+        "clusters:\n- name: custom\n  cluster: {server: 'https://kubernetes.invalid'}\n"
+    )
+    seen: dict[str, str] = {}
+
+    def discover_inventory(*, context: str, kubeconfig: Path):
+        seen["inventory_context"] = context
+        seen["inventory_kubeconfig"] = str(kubeconfig)
+        return type(
+            "Inventory",
+            (),
+            {
+                "to_dict": lambda self: {},
+                "ready_nodes": 0,
+                "eligible_gpu_nodes": 0,
+                "capacity": 0,
+                "allocatable": 0,
+                "products": (),
+            },
+        )()
+
+    def discover_catalog(*, context: str, kubeconfig: Path, sky_bin: str):
+        seen["catalog_context"] = context
+        return KubernetesGpuCatalog({}, context=context)
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        discover_inventory,
+    )
+    monkeypatch.setattr(
+        "npa.controller_ownership.verify_recorded_controller_owner", lambda: None
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_catalog",
+        discover_catalog,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--cluster",
+            "custom-cluster",
+            "--kubeconfig",
+            str(custom_kubeconfig),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["inventory_context"] == "custom-cluster"
+    assert seen["inventory_kubeconfig"] == str(custom_kubeconfig)
+
+
 def test_workflow_gpus_isolated_state_does_not_consult_shared_owner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:

@@ -4207,6 +4207,31 @@ def test_sky_environment_links_default_kubeconfig_when_unset(
     assert isolated_kubeconfig.resolve() == default_kubeconfig.resolve()
 
 
+def test_sky_environment_preserves_mise_directories(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
+    operator_home = tmp_path / "operator"
+    mise_config = operator_home / ".config" / "mise"
+    mise_state = operator_home / ".local" / "state" / "mise"
+    mise_data = operator_home / ".local" / "share" / "mise"
+    mise_config.mkdir(parents=True)
+    mise_state.mkdir(parents=True)
+    mise_data.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(operator_home))
+    monkeypatch.delenv("MISE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("MISE_STATE_DIR", raising=False)
+    monkeypatch.delenv("MISE_DATA_DIR", raising=False)
+
+    isolated = tmp_path / "isolated"
+    env = sky_environment(isolated)
+
+    assert env["MISE_CONFIG_DIR"] == str(mise_config)
+    assert env["MISE_STATE_DIR"] == str(mise_state)
+    assert env["MISE_DATA_DIR"] == str(mise_data)
+
+
 def test_submit_workflow_require_controller_up_uses_canonical_preflight(
     monkeypatch, tmp_path
 ) -> None:

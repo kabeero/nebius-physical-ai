@@ -10957,6 +10957,11 @@ def gpus_cmd(
         "--context",
         help="Exact context. Defaults to KUBECONTEXT or legacy all-context discovery.",
     ),
+    kubeconfig: Path | None = typer.Option(
+        None,
+        "--kubeconfig",
+        help="Exact kubeconfig for owned Kubernetes verification.",
+    ),
     sky_bin: str = typer.Option(
         "",
         "--sky-bin",
@@ -10980,6 +10985,7 @@ def gpus_cmd(
         project: Optional local project identity to verify.
         cluster: NPA cluster selecting its kubeconfig and context.
         context: Exact context, otherwise the existing environment/default behavior.
+        kubeconfig: Optional exact Kubernetes configuration file.
         sky_bin: Optional selected SkyPilot executable.
         isolated_config_dir: Optional parent state root, preceding environment/config.
         spec: Optional workflow whose accelerator names should be resolved.
@@ -10992,28 +10998,45 @@ def gpus_cmd(
     resolved_context = (
         context.strip() or cluster.strip() or os.environ.get("KUBECONTEXT", "").strip()
     )
-    inventory, catalog, sky_error = _inspect_workflow_gpus(
-        project, cluster, resolved_context, sky_bin, isolated_config_dir
-    )
+    if kubeconfig is not None:
+        inventory, catalog, sky_error = _inspect_workflow_gpus(
+            project,
+            cluster,
+            resolved_context,
+            sky_bin,
+            isolated_config_dir,
+            kubeconfig=kubeconfig,
+        )
+    else:
+        inventory, catalog, sky_error = _inspect_workflow_gpus(
+            project,
+            cluster,
+            resolved_context,
+            sky_bin,
+            isolated_config_dir,
+        )
     resolutions, spec_error = _gpu_spec_resolutions(spec, catalog)
     _report_gpu_discovery(
         inventory, catalog, sky_error, resolutions, spec_error, json_output
     )
 
 
-def _owned_gpu_target(project, cluster, context, sky_bin, isolated_config_dir):
+def _owned_gpu_target(
+    project, cluster, context, sky_bin, isolated_config_dir, kubeconfig=None
+):
+    from npa.cluster.state import resolve_cluster_kubeconfig
     from npa.orchestration.skypilot import _bin
     from npa.orchestration.skypilot.cluster_validation import (
         resolve_validation_project,
         resolve_validation_target,
     )
 
-    kubeconfig = None
-    if cluster.strip():
-        from npa.cluster.state import kubeconfig_file
-
-        kubeconfig = kubeconfig_file(cluster.strip())
-    selected, exact_context = resolve_validation_target(kubeconfig, context)
+    resolved_kubeconfig = resolve_cluster_kubeconfig(
+        cluster.strip() or context.strip(), explicit_path=kubeconfig
+    )
+    selected, exact_context = resolve_validation_target(
+        resolved_kubeconfig, context
+    )
     alias = resolve_validation_project(project, exact_context)
     config = _bin.resolve_config(
         sky_bin=sky_bin or None, isolated_config_dir=isolated_config_dir
@@ -11021,7 +11044,9 @@ def _owned_gpu_target(project, cluster, context, sky_bin, isolated_config_dir):
     return selected, exact_context, alias, config
 
 
-def _inspect_workflow_gpus(project, cluster, context, sky_bin, isolated_config_dir):
+def _inspect_workflow_gpus(
+    project, cluster, context, sky_bin, isolated_config_dir, kubeconfig=None
+):
     from contextlib import nullcontext
     from npa.orchestration.skypilot import _bin, k8s_gpu_catalog as discovery
     from npa.orchestration.skypilot.cluster_validation import cluster_validation_session
@@ -11032,7 +11057,12 @@ def _inspect_workflow_gpus(project, cluster, context, sky_bin, isolated_config_d
         selected, executable, boundary = None, sky_bin or None, nullcontext()
         if context:
             selected, context, alias, config = _owned_gpu_target(
-                project, cluster, context, sky_bin, isolated_config_dir
+                project,
+                cluster,
+                context,
+                sky_bin,
+                isolated_config_dir,
+                kubeconfig=kubeconfig,
             )
             executable = config.sky_bin
             boundary = cluster_validation_session(

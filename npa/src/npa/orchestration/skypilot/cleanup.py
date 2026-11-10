@@ -2074,6 +2074,16 @@ def sky_environment(
         and not isolated_provider_config.is_symlink()
     ):
         isolated_provider_config.symlink_to(provider_config, target_is_directory=True)
+    if provider_home != home:
+        mise_config = provider_home / ".config" / "mise"
+        mise_state = provider_home / ".local" / "state" / "mise"
+        mise_data = provider_home / ".local" / "share" / "mise"
+        if "MISE_CONFIG_DIR" not in env and mise_config.is_dir():
+            env["MISE_CONFIG_DIR"] = str(mise_config)
+        if "MISE_STATE_DIR" not in env and mise_state.is_dir():
+            env["MISE_STATE_DIR"] = str(mise_state)
+        if "MISE_DATA_DIR" not in env and mise_data.is_dir():
+            env["MISE_DATA_DIR"] = str(mise_data)
     # SkyPilot 0.12.2's Kubernetes region validator calls
     # ``list_kube_config_contexts()`` without a ``config_file`` argument.  The
     # Kubernetes client therefore ignores KUBECONFIG and reads only

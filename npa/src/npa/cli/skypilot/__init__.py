@@ -868,32 +868,11 @@ def _verify_kube_env(
     owned_target: bool = True,
 ) -> tuple[dict[str, str] | None, str]:
     """Resolve an explicit Kubernetes target without changing ambient configuration."""
+    from npa.cluster.state import resolve_cluster_kubeconfig
+
     resolved = kubeconfig
     if resolved is None and cluster:
-        from npa.cluster.state import kubeconfig_file
-
-        try:
-            direct = kubeconfig_file(cluster)
-            if direct.exists():
-                resolved = direct
-        except Exception:
-            pass
-        if resolved is None:
-            try:
-                from npa.cluster.state import existing_kubeconfig
-
-                candidate = existing_kubeconfig(cluster)
-                if candidate is not None and candidate.exists():
-                    resolved = candidate
-            except Exception:
-                pass
-        if resolved is None:
-            raw_default = os.environ.get("KUBECONFIG", "").strip()
-            resolved = (
-                Path(raw_default).expanduser()
-                if raw_default
-                else (Path.home() / ".kube" / "config")
-            )
+        resolved = resolve_cluster_kubeconfig(cluster)
     if resolved is None:
         return None, str(cluster or "").strip()
     if os.pathsep in str(resolved) and owned_target:
