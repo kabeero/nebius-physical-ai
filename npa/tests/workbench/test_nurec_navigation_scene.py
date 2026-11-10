@@ -15,7 +15,9 @@ import pytest
 from npa.workbench.nurec.navigation_assets import sha256
 from npa.workbench.nurec.navigation_scene import prepare_scene
 
-from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, UsdUtils, UsdVol
+# usd-core ships no linux/aarch64 wheels, so the whole module skips without it.
+pytest.importorskip("pxr")
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, UsdUtils, UsdVol  # noqa: E402
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="

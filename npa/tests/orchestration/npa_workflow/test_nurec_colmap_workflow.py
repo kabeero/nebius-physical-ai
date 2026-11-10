@@ -817,14 +817,19 @@ def test_qualification_usd_runtime_matches_development_pin():
     from npa.workbench.nurec.qualification_audit import USD_RUNTIME_VERSION
 
     version = ".".join(map(str, USD_RUNTIME_VERSION[1:]))
-    project = tomllib.loads((ROOT / "npa/pyproject.toml").read_text())["project"]
+    manifest = tomllib.loads((ROOT / "npa/pyproject.toml").read_text())
+    # usd-core 26.8 ships no linux/aarch64 wheels (NRE itself is x86_64-only),
+    # so every development pin carries a marker that keeps aarch64 installs
+    # resolvable instead of dead-ending the whole extra.
+    pinned = f"usd-core=={version}; platform_machine != 'aarch64'"
     for extra in ("nurec-audit", "dev"):
         usd_pins = [
             pin
-            for pin in project["optional-dependencies"][extra]
+            for pin in manifest["project"]["optional-dependencies"][extra]
             if pin.startswith("usd-core")
         ]
-        assert usd_pins == [f"usd-core=={version}"]
+        assert usd_pins == [pinned]
+    assert pinned in manifest["dependency-groups"]["dev"]
 
 
 def test_production_qualification_rejects_a_foreign_recording(downstream_run):
@@ -856,7 +861,7 @@ def test_production_qualification_requires_a_prefix_binding(
 
 
 def test_qualification_rejects_an_unpinned_usd_runtime(tmp_path, monkeypatch):
-    from pxr import Usd
+    Usd = pytest.importorskip("pxr.Usd")
 
     from npa.workbench.nurec.qualification_audit import (
         NcoreQualificationAuditError,

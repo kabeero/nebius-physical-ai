@@ -3,7 +3,10 @@
 from types import SimpleNamespace
 
 import pytest
-from pxr import Usd, UsdPhysics
+
+# usd-core ships no linux/aarch64 wheels, so the whole module skips without it.
+pytest.importorskip("pxr")
+from pxr import Usd, UsdPhysics  # noqa: E402
 
 from npa.workflows.navigation.contact_surface import _root_indices
 

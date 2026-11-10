@@ -2,7 +2,10 @@
 
 import numpy as np
 import pytest
-from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
+# usd-core ships no linux/aarch64 wheels, so the whole module skips without it.
+pytest.importorskip("pxr")
+from pxr import Gf, Usd, UsdGeom, UsdPhysics  # noqa: E402
 
 from npa.workflows.navigation.contact_witness import _sphere_record, _terrain_witness
 

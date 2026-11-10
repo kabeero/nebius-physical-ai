@@ -52,11 +52,12 @@ def test_navigation_rejects_unqualified_source_geometry(tmp_path, change):
 
 
 def test_packaged_scene_has_only_original_static_colliders_and_source_hashes(tmp_path):
-    from pxr import Usd, UsdGeom, UsdPhysics
-
     _, world = _world(tmp_path)
     points, faces = collision_geometry(tmp_path, world)
     source = {"world_manifest_sha256": "b" * 64, "collider_sha256": "c" * 64}
+    Usd = pytest.importorskip("pxr.Usd")
+    UsdGeom = pytest.importorskip("pxr.UsdGeom")
+    UsdPhysics = pytest.importorskip("pxr.UsdPhysics")
     destination = tmp_path / "scene.usdz"
     write_scene(destination, points, faces, source)
     stage = Usd.Stage.Open(str(destination))

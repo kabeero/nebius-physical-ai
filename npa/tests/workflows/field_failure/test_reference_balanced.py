@@ -18,6 +18,10 @@ from npa.workflows.navigation.reference_identity import collision_identity
 from npa.workflows.navigation.reference_replay import apply_replay, compose_scene
 from npa.workflows.navigation.reference_scene import cases, warehouse
 
+# Every test builds or replays USD scenes through helpers that lazily import
+# pxr, and usd-core ships no linux/aarch64 wheels, so the module skips without it.
+pytest.importorskip("pxr")
+
 IMAGE = "registry.example/native@sha256:" + "a" * 64
 
 

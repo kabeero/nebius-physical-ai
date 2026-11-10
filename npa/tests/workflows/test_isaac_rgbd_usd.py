@@ -9,8 +9,11 @@ import zipfile
 from types import ModuleType, SimpleNamespace
 
 from PIL import Image
-from pxr import Sdf, Usd, UsdGeom, UsdUtils
 import pytest
+
+# usd-core ships no linux/aarch64 wheels, so the whole module skips without it.
+pytest.importorskip("pxr")
+from pxr import Sdf, Usd, UsdGeom, UsdUtils  # noqa: E402
 
 from npa.workflows.isaac_rgbd import runtime
 from npa.workflows.isaac_rgbd.contract import _sha256
