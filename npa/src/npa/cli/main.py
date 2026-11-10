@@ -1302,7 +1302,8 @@ def _resolve_discovery_tenant(
     drop the operator into hand-typing tenant/project ids even though the
     account was perfectly reachable. Recover the tenant instead:
 
-    1. the profile's own ``tenant-id``;
+    1. the profile's own ``tenant-id``, when it is a tenant resource ID — a
+       tenant *name* saved as ``tenant-id`` is warned about and ignored;
     2. the parent tenant of the profile's ``parent-id`` project;
     3. the tenants the profile can list (auto-select a single one, otherwise
        prompt).
@@ -1311,9 +1312,16 @@ def _resolve_discovery_tenant(
     skipped rather than staying quiet.
     """
 
+    from npa.clients.nebius import is_tenant_id
+
     tenant = str(nebius_client.current_tenant_id() or "").strip()
     if tenant:
-        return tenant, ""
+        if is_tenant_id(tenant):
+            return tenant, ""
+        typer.echo(
+            f"The active Nebius profile's tenant-id ({tenant!r}) is not a "
+            "tenant resource ID; ignoring it and recovering the tenant instead."
+        )
 
     project_id = str(nebius_client.current_project_id() or "").strip()
     if project_id:
@@ -2639,6 +2647,12 @@ def _run_known_project_configure(
         raise typer.BadParameter(
             "--project-alias must start with a letter or digit and contain only "
             "letters, digits, '.', '_', or '-' (maximum 64 characters)"
+        )
+    if not nebius_client.is_tenant_id(values["--tenant-id"]):
+        raise typer.BadParameter(
+            f"--tenant-id {values['--tenant-id']!r} is not a tenant resource ID. "
+            "A tenant name will not work later in provider calls; list tenant "
+            "IDs with `nebius iam v2 tenant list` and pass one of the `id` values."
         )
     requested_storage_class = str(bucket_storage_class or "").strip()
     requested_size_gb = str(bucket_size_gb or "").strip()
