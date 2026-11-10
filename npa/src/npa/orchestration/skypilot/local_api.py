@@ -1442,6 +1442,9 @@ def ensure_isolated_api(
             "SKYPILOT_GLOBAL_CONFIG",
             "SKYPILOT_SERVER_PLUGINS_CONFIG",
             "PYTHONPATH",
+            "MISE_CONFIG_DIR",
+            "MISE_STATE_DIR",
+            "MISE_DATA_DIR",
             _ENDPOINT,
             _MARKER,
         )

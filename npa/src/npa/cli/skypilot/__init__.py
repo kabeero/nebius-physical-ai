@@ -868,13 +868,21 @@ def _verify_kube_env(
     owned_target: bool = True,
 ) -> tuple[dict[str, str] | None, str]:
     """Resolve an explicit Kubernetes target without changing ambient configuration."""
+    from npa.cluster.state import resolve_cluster_kubeconfig
+
     resolved = kubeconfig
     if resolved is None and cluster:
-        from npa.cluster.state import kubeconfig_file
-
-        resolved = kubeconfig_file(cluster)
+        resolved = resolve_cluster_kubeconfig(cluster)
     if resolved is None:
         return None, str(cluster or "").strip()
+    if os.pathsep in str(resolved) and owned_target:
+        from npa.orchestration.skypilot.cluster_validation import (
+            resolve_validation_target,
+        )
+
+        resolved, exact_context = resolve_validation_target(
+            resolved, str(cluster or "").strip()
+        )
     resolved = resolved.expanduser()
     if not resolved.exists():
         raise RuntimeError(

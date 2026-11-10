@@ -359,10 +359,48 @@ def resolve_validation_target(
         if target.get("user"):
             _named_kube_entry(document, "users", target["user"])
     except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
-        raise local_api.IsolatedApiError(
+        details = [
             "Kubeconfig or exact context is missing, ambiguous, or invalid; select one existing file "
-            "with a unique context and valid cluster/user references"
-        ) from exc
+            "with a unique context and valid cluster/user references."
+        ]
+        available_contexts: list[str] = []
+        cluster_matched_contexts: list[str] = []
+        try:
+            if "document" in locals() and isinstance(document, dict):
+                for entry in document.get("contexts") or []:
+                    if isinstance(entry, dict) and entry.get("name"):
+                        c_name = str(entry["name"])
+                        available_contexts.append(c_name)
+                        ctx_body = entry.get("context")
+                        if (
+                            context
+                            and isinstance(ctx_body, dict)
+                            and ctx_body.get("cluster") == context
+                        ):
+                            cluster_matched_contexts.append(c_name)
+        except Exception:
+            pass
+
+        if cluster_matched_contexts:
+            details.append(
+                f"Context(s) referencing cluster {context!r}: {', '.join(cluster_matched_contexts)}. "
+                f"Try passing `--cluster {cluster_matched_contexts[0]}`."
+            )
+        elif available_contexts:
+            details.append(
+                f"Contexts visible to kubectl in {raw}: {', '.join(available_contexts)}."
+            )
+        elif "selected" in locals():
+            details.append(f"No valid contexts found in {raw}.")
+
+        details.append(
+            "Suggested actions:\n"
+            "  - Check for typos in the cluster or context name.\n"
+            "  - To check contexts visible to kubectl, run: `kubectl config get-contexts`\n"
+            "  - To list valid clusters visible to your Nebius profile, run: `nebius mk8s cluster list`\n"
+            "  - If the cluster exists in Nebius but is missing from kubeconfig, run: `nebius mk8s cluster get-credentials --name <cluster-name>`"
+        )
+        raise local_api.IsolatedApiError("\n".join(details)) from exc
     return selected, exact
 
 

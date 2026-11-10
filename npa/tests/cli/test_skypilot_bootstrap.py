@@ -601,6 +601,129 @@ def test_verify_scopes_existing_kubeconfig_to_its_current_context(
     ]
 
 
+def test_verify_with_cluster_loads_default_kubeconfig_when_flag_omitted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owned_verification
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    kubeconfig = tmp_path / "default-kube.yaml"
+    _verification_kubeconfig(kubeconfig, "ambient-context")
+    monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
+    captured: dict[str, object] = {}
+    _intercept_sky_check(monkeypatch, captured)
+
+    result = runner.invoke(
+        app,
+        ["skypilot", "verify", "--path", str(venv), "--cluster", "ambient-context"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["cmd"][-4:] == [
+        "check",
+        "--config",
+        'kubernetes.allowed_contexts=["ambient-context"]',
+        "kubernetes",
+    ]
+    assert captured["env"]["KUBECONFIG"] == str(kubeconfig)
+
+
+def test_verify_with_cluster_prefers_npa_cluster_kubeconfig_if_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owned_verification
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    default_kubeconfig = tmp_path / "default-kube.yaml"
+    _verification_kubeconfig(default_kubeconfig, "ambient-context")
+    monkeypatch.setenv("KUBECONFIG", str(default_kubeconfig))
+
+    npa_kubeconfig = tmp_path / "npa-cluster-kube.yaml"
+    _verification_kubeconfig(npa_kubeconfig, "my-npa-cluster")
+    monkeypatch.setattr(
+        "npa.cluster.state.existing_kubeconfig",
+        lambda name: npa_kubeconfig if name == "my-npa-cluster" else None,
+    )
+    captured: dict[str, object] = {}
+    _intercept_sky_check(monkeypatch, captured)
+
+    result = runner.invoke(
+        app,
+        ["skypilot", "verify", "--path", str(venv), "--cluster", "my-npa-cluster"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["cmd"][-4:] == [
+        "check",
+        "--config",
+        'kubernetes.allowed_contexts=["my-npa-cluster"]',
+        "kubernetes",
+    ]
+    assert captured["env"]["KUBECONFIG"] == str(npa_kubeconfig)
+
+
+def test_verify_with_invalid_cluster_provides_actionable_suggestions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owned_verification
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    kubeconfig = tmp_path / "kube.yaml"
+    _verification_kubeconfig(kubeconfig, "valid-ctx-1")
+    captured: dict[str, object] = {}
+    _intercept_sky_check(monkeypatch, captured)
+
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "verify",
+            "--path",
+            str(venv),
+            "--kubeconfig",
+            str(kubeconfig),
+            "--cluster",
+            "nonexistent-cluster",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert (
+        "Kubeconfig or exact context is missing, ambiguous, or invalid" in result.output
+    )
+    assert "nebius mk8s cluster list" in result.output
+    assert "kubectl config get-contexts" in result.output
+    assert "nebius mk8s cluster get-credentials" in result.output
+    assert "typo" in result.output.lower()
+    assert "valid-ctx-1" in result.output
+
+
+def test_verify_with_cluster_flag_without_kubeconfig_fails_helpfully_on_missing_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owned_verification
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv")
+    kubeconfig = tmp_path / "default-kube.yaml"
+    _verification_kubeconfig(kubeconfig, "actual-context")
+    monkeypatch.setenv("KUBECONFIG", str(kubeconfig))
+    captured: dict[str, object] = {}
+    _intercept_sky_check(monkeypatch, captured)
+
+    result = runner.invoke(
+        app,
+        [
+            "skypilot",
+            "verify",
+            "--path",
+            str(venv),
+            "--cluster",
+            "typo-context",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert (
+        "Kubeconfig or exact context is missing, ambiguous, or invalid" in result.output
+    )
+    assert "nebius mk8s cluster list" in result.output
+    assert "kubectl config get-contexts" in result.output
+    assert "nebius mk8s cluster get-credentials" in result.output
+    assert "actual-context" in result.output
+
+
 def test_verify_rejects_zero_exit_when_kubernetes_is_disabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
