@@ -984,6 +984,48 @@ def test_mk8s_preflight_reuses_provider_verified_zero_increment(
     assert result["capacity_quota"] == "provider-verified-zero-increment"
 
 
+def test_mk8s_preflight_missing_identity_names_only_the_gap_and_the_remedy(
+    tmp_path,
+) -> None:
+    """An unresolved identity must not read like an internal wiring bug.
+
+    `nebius_bin` and `provider_env` are always wired by `npa cluster up`; the
+    real gap is tenant/region. The error used to list all four request
+    fields, which told the operator nothing actionable.
+    """
+    desired = ClusterSpec(
+        name="fresh",
+        cpu_nodes=NodePoolSpec(count=1, platform="cpu-d3", preset="8vcpu-32gb"),
+    )
+    project = ProjectSpec(name="target", project_id="project-test", clusters=[desired])
+    spec = FleetSpec(
+        name="standalone",
+        tenant_id="",
+        region="",
+        projects=[project],
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        get_backend("mk8s").preflight(
+            desired,
+            MK8sApplyRequest(
+                **_mk8s_execution_identity(spec, project),
+                tenant_id="",
+                region="",
+                nebius_bin="nebius",
+                provider_env={},
+                provider_preflight=True,
+                fleet_root=tmp_path,
+            ),
+        )
+
+    message = str(excinfo.value)
+    assert "mk8s provider preflight is missing: tenant_id, region" in message
+    assert "nebius_bin" not in message
+    assert "provider_env" not in message
+    assert "pass a configured --project alias" in message
+
+
 def test_id_backed_standalone_target_proves_zero_increment_without_name_match(
     tmp_path, monkeypatch
 ) -> None:

@@ -7,6 +7,27 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Accurate `cluster up` identity errors and recovery commands
+
+- `npa cluster up --project <value>` now validates the value against the
+  configured project aliases before any Terraform preflight, scratch
+  directory, or recovery journal exists. A Nebius project ID pasted where the
+  config alias belongs fails immediately with the alias it belongs to (and the
+  sole-project omission remedy); a typo lists the available aliases.
+  Previously the mistake resolved to nothing silently and surfaced much
+  later as `mk8s provider preflight requires nebius_bin, tenant_id, region,
+  and provider_env` — internal request fields an operator cannot set.
+- The mk8s backend's provider preflight now names only the identity values
+  that are actually missing and the alias/`terraform.tfvars` remedies, and
+  `cluster up` with several configured projects but no `default_project`
+  fails with the alias choice instead of proceeding against an arbitrary
+  project.
+- Failed `cluster up` recovery summaries no longer print `--project` with an
+  empty value (which could not be pasted back) and only repeat an alias that
+  actually resolved. `cluster down --project <unresolvable>` still tears down
+  from `terraform.tfvars` and saved cluster state, but now says so instead of
+  silently ignoring the typed value.
+
 ### Provider-reported VLM observable support
 
 - Require every real hosted or self-hosted scalar VLM verdict to return a

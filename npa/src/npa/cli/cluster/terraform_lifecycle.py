@@ -101,6 +101,66 @@ def _redacted_exception_message(prefix: str, exc: BaseException) -> str:
     return redact_nebius_output(f"{prefix}: {type(exc).__name__}: {exc}")
 
 
+def _require_configured_project_alias(project: str) -> None:
+    """Fail fast on an explicitly typed ``--project`` alias that does not exist.
+
+    The usual mistake is the Nebius project ID pasted where the config alias
+    belongs.  Resolving it to nothing and continuing used to surface much
+    later as the mk8s backend's "provider preflight requires nebius_bin,
+    tenant_id, region, and provider_env" — request fields an operator cannot
+    set — while the recovery journal suggested Resume/Destroy commands that
+    repeated the same unresolvable value.  A usage error stops here instead:
+    before any Terraform preflight output, scratch directory, or journal.
+    """
+
+    from npa.clients.config import ConfigError, resolve_project_environment
+
+    try:
+        resolve_project_environment(project)
+    except ConfigError as exc:
+        raise typer.BadParameter(
+            f"{exc} You can also set parent_id/tenant_id/region in the "
+            "cluster's terraform.tfvars and omit --project.",
+            param_hint="--project",
+        ) from exc
+
+
+def _recovery_command_argv(
+    project: str, context: str, tf_dir: Path
+) -> tuple[list[str], list[str]]:
+    """Build runnable-as-printed resume/destroy argv for a ``cluster up`` journal.
+
+    ``--project`` is omitted when no alias is in effect instead of rendering
+    an empty value, which the journal would replay as ``--project --context
+    ...`` and Click would reject. Token form (not a joined string) survives
+    ``--terraform-dir`` paths containing spaces.
+    """
+
+    project_args = ["--project", project] if project else []
+    resume_argv = [
+        "npa",
+        "cluster",
+        "up",
+        *project_args,
+        "--context",
+        context,
+        "--terraform-dir",
+        str(tf_dir),
+    ]
+    destroy_argv = [
+        "npa",
+        "cluster",
+        "down",
+        *project_args,
+        "--context",
+        context,
+        "--terraform-dir",
+        str(tf_dir),
+        "--force",
+    ]
+    return resume_argv, destroy_argv
+
+
 def _transactional_cluster_up(function):
     signature = inspect.signature(function)
 
@@ -141,14 +201,30 @@ def _transactional_cluster_up(function):
             or tfvars.get("region")
             or ""
         )
+        if inherited_plan is None and str(bound.arguments.get("project") or "").strip():
+            # Only the alias the operator actually typed is validated: an
+            # inherited plan's alias was resolved when the plan was built.
+            _require_configured_project_alias(
+                str(bound.arguments.get("project") or "").strip()
+            )
         if not project_id:
-            from npa.clients.config import resolve_environment
+            from npa.clients.config import ConfigError, resolve_project_environment
 
-            saved = resolve_environment(project or None)
+            try:
+                saved = resolve_project_environment(project or None)
+            except ConfigError as exc:
+                # Several configured projects and no default: picking one
+                # silently would target an arbitrary project, so surface the
+                # choice. `cluster up` has no -p short flag; say --project.
+                raise typer.BadParameter(
+                    str(exc).replace("Pass -p/--project", "Pass --project"),
+                    param_hint="--project",
+                ) from exc
             if saved is not None:
                 project_id = saved.project_id
                 tenant_id = tenant_id or saved.tenant_id
                 region = region or saved.region
+        resume_argv, destroy_argv = _recovery_command_argv(project, context, tf_dir)
         operation = ProvisioningOperation.prepare(
             command="npa cluster up",
             project_alias=project,
@@ -159,14 +235,10 @@ def _transactional_cluster_up(function):
             resource_type="cluster",
             requested_name=context,
             ownership_source="cluster-terraform",
-            resume_command=(
-                f"npa cluster up --project {project} --context {context} "
-                f"--terraform-dir {tf_dir}"
-            ),
-            destroy_command=(
-                f"npa cluster down --project {project} --context {context} "
-                f"--terraform-dir {tf_dir} --force"
-            ),
+            resume_command=" ".join(resume_argv),
+            resume_argv=resume_argv,
+            destroy_command=" ".join(destroy_argv),
+            destroy_argv=destroy_argv,
         )
         state_existed_before = any(
             candidate.is_file()
@@ -1238,12 +1310,31 @@ def down_cmd(
     )
 
     from npa.cleanup_identity import CleanupIdentityError, resolve_cleanup_identity
-    from npa.clients.config import resolve_environment
+    from npa.clients.config import (
+        ConfigError,
+        resolve_environment,
+        resolve_project_environment,
+    )
 
     tf_dir = _resolve_terraform_dir(terraform_dir)
     tfvars = _read_tfvars(tf_dir)
     alias = project.strip()
     saved = resolve_environment(alias) if alias else None
+    if alias and saved is None:
+        try:
+            resolve_project_environment(alias)
+        except ConfigError:
+            # An explicit alias that matches nothing is usually the ID/alias
+            # mix-up, or an alias teardown already removed (aliases do not
+            # survive `npa configure --forget-project`). Destruction must not
+            # depend on it — tfvars and the saved cluster state still identify
+            # the target — but say so instead of silently ignoring typed input.
+            typer.echo(
+                f"note: --project {alias!r} is not a configured project alias; "
+                "falling back to terraform.tfvars and the saved cluster state "
+                "for identity.",
+                err=True,
+            )
     live = {
         "project_alias": alias,
         "project_id": str(
