@@ -738,6 +738,79 @@ def _verify_selected_runtime(
     return payload, 0 if payload["status"] == "ok" else result.returncode or 1
 
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_SKY_CHECK_TRACEBACK_HEADER = "Traceback (most recent call last):"
+_MODULE_NOT_FOUND_RE = re.compile(r"ModuleNotFoundError: No module named '([^']+)'")
+
+
+def _traceback_adaptor_probe(
+    lines: list[str], start: int
+) -> tuple[int, str | None]:
+    """Inspect a sky-check traceback that begins at ``lines[start]``.
+
+    SkyPilot's per-cloud probes leak an interpreter traceback for optional
+    clouds NPA never enables (SkyPilot 0.12.2's DigitalOcean adaptor probes
+    ``azure.core.exceptions`` and ``find_spec`` raises instead of returning
+    ``None``). Only tracebacks whose frames sit in upstream ``sky/adaptors/``
+    and whose terminal exception is a ``ModuleNotFoundError`` are condensed;
+    anything else, including Kubernetes or Nebius failures, must pass through.
+
+    Args:
+        lines: Combined ``sky check`` output lines, blanks already removed.
+        start: Index of the line carrying the traceback header.
+
+    Returns:
+        A ``(consumed_end, summary)`` pair. ``consumed_end`` is the index
+        after the frames for non-matching tracebacks, and after the terminal
+        exception line for matching ones. ``summary`` is the one-line
+        replacement reason, or ``None`` when the traceback must pass through.
+    """
+    plain = [_ANSI_ESCAPE_RE.sub("", line) for line in lines]
+    end = start + 1
+    while end < len(plain) and plain[end][:1].isspace():
+        end += 1
+    exception_line = plain[end] if end < len(plain) else ""
+    match = _MODULE_NOT_FOUND_RE.search(exception_line)
+    if match is None:
+        return end, None
+    frames = "".join(plain[start:end])
+    if "/sky/adaptors/" not in frames:
+        return end, None
+    reason_prefix = plain[start].split(_SKY_CHECK_TRACEBACK_HEADER, 1)[0].rstrip()
+    missing = match.group(1)
+    summary = (
+        f"{reason_prefix} disabled by upstream sky check: missing optional "
+        f"skypilot dependency '{missing}' (traceback filtered)"
+    )
+    return end + 1, summary
+
+
+def _collapse_upstream_adaptor_tracebacks(lines: list[str]) -> list[str]:
+    """Replace upstream optional-cloud probe tracebacks with a one-line reason.
+
+    Args:
+        lines: Combined ``sky check`` output lines, blanks already removed.
+
+    Returns:
+        Lines with qualifying tracebacks condensed; all other lines verbatim.
+    """
+    collapsed: list[str] = []
+    index = 0
+    while index < len(lines):
+        plain = _ANSI_ESCAPE_RE.sub("", lines[index])
+        if _SKY_CHECK_TRACEBACK_HEADER not in plain:
+            collapsed.append(lines[index])
+            index += 1
+            continue
+        consumed_end, summary = _traceback_adaptor_probe(lines, index)
+        if summary is None:
+            collapsed.extend(lines[index:consumed_end])
+        else:
+            collapsed.append(summary)
+        index = max(consumed_end, index + 1)
+    return collapsed
+
+
 def _verification_payload(result, backend, kubernetes_required):
     lines = [line for line in _combined_output(result).splitlines() if line.strip()]
     profile_failure = any(
@@ -753,9 +826,10 @@ def _verification_payload(result, backend, kubernetes_required):
         and not (profile_failure and backend == "nebius")
         and (not kubernetes_required or enabled)
     )
+    condensed = _collapse_upstream_adaptor_tracebacks(lines)
     filtered = [
         line
-        for line in lines
+        for line in condensed
         if "unable to create nebius profile" not in line.lower()
         and not (
             profile_failure

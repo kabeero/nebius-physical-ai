@@ -7,6 +7,17 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### SkyPilot verify traceback-noise filtering
+
+- Condense upstream `sky check` probe tracebacks in `npa skypilot verify`
+  output into a one-line reason when they originate in upstream
+  `sky/adaptors/` code and terminate in a `ModuleNotFoundError` for a missing
+  optional-cloud dependency (SkyPilot 0.12.2's DigitalOcean adaptor probes
+  `azure.core.exceptions` and leaks a traceback when the `azure` package is
+  absent from the isolated venv). The isolated SkyPilot venv still installs
+  only the `nebius` and `kubernetes` extras; the azure package is not needed
+  for any NPA-controlled path. Tracebacks from other paths, including
+  Kubernetes and Nebius failures, pass through unchanged.
 ### Provider-reported VLM observable support
 
 - Require every real hosted or self-hosted scalar VLM verdict to return a
