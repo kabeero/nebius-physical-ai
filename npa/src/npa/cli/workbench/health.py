@@ -661,6 +661,15 @@ def sim2real_command(
         raise typer.BadParameter(
             "--project is only used by the S3 health check. Include --checks s3."
         )
+    try:
+        config = _sim2real_preflight_config(selected, overrides)
+    except ValueError as exc:
+        # Image resolution deliberately fails closed for quarantined public
+        # releases. Surface that policy as an actionable CLI error instead of
+        # leaking an unrendered exception (and only after validating --checks).
+        raise typer.BadParameter(str(exc)) from exc
+
+    diagnostic_overrides = dict(overrides)
     credentials = None
     project_storage_failure: CheckResult | None = None
     if project.strip() and "s3" in selected:
@@ -671,9 +680,9 @@ def sim2real_command(
                 # CredentialsConfig keeps a URI because it is also consumed by
                 # credential preflight.  The execution config, however, owns a
                 # bucket *name* and derives its own s3:// artifact URIs.
-                overrides["s3_bucket"] = credentials.s3_bucket.removeprefix("s3://")
+                diagnostic_overrides["s3_bucket"] = credentials.s3_bucket.removeprefix("s3://")
             if not s3_endpoint.strip():
-                overrides["s3_endpoint"] = credentials.s3_endpoint
+                diagnostic_overrides["s3_endpoint"] = credentials.s3_endpoint
         except (ConfigError, ProjectCredentialStoreError) as exc:
             project_storage_failure = CheckResult(
                 name="s3",
@@ -685,14 +694,17 @@ def sim2real_command(
                     "rerun the S3 health check."
                 ),
             )
+    elif "s3" in selected:
+        if not s3_bucket.strip() or not s3_endpoint.strip():
+            credentials = load_credentials()
+            if not s3_bucket.strip() and getattr(credentials, "s3_bucket", ""):
+                diagnostic_overrides["s3_bucket"] = credentials.s3_bucket.removeprefix("s3://")
+            if not s3_endpoint.strip() and getattr(credentials, "s3_endpoint", ""):
+                diagnostic_overrides["s3_endpoint"] = credentials.s3_endpoint
 
-    try:
-        config = _sim2real_preflight_config(selected, overrides)
-    except ValueError as exc:
-        # Image resolution deliberately fails closed for quarantined public
-        # releases. Surface that policy as an actionable CLI error instead of
-        # leaking an unrendered exception (and only after validating --checks).
-        raise typer.BadParameter(str(exc)) from exc
+    if any(diagnostic_overrides.get(k) != overrides.get(k) for k in ("s3_bucket", "s3_endpoint")):
+        config = _sim2real_preflight_config(selected, diagnostic_overrides)
+
     if credentials is None:
         credentials = load_credentials()
 
