@@ -34,6 +34,28 @@ class PreparedNpaWorkflowSubmit:
     temp_dir: tempfile.TemporaryDirectory[str]
 
 
+def _validate_bucket_override(value: object) -> None:
+    """Reject URI-decorated ``bucket`` overrides before they compose bad URIs.
+
+    Shipped specs compose ``s3://{{config.bucket}}/...`` themselves, so the
+    override must be the bare bucket name. A scheme prefix or trailing slash
+    would render as ``s3://s3://<name>/...`` or a double slash and fail much
+    later against object storage, so fail fast with the exact fix instead.
+
+    Args:
+        value: Override value supplied for the ``bucket`` config key.
+    Raises:
+        NpaWorkflowError: The value carries the ``s3://`` scheme or a slash.
+    """
+    text = str(value)
+    if text.startswith("s3://") or text.endswith("/"):
+        raise NpaWorkflowError(
+            "Invalid bucket override: expected the bare bucket name without the "
+            "s3:// scheme or a trailing slash (workflow specs compose "
+            "s3://<bucket>/... themselves). Use --var bucket=<name>."
+        )
+
+
 def merge_config_overrides(
     spec: NpaWorkflowSpec,
     overrides: Mapping[str, str] | None,
@@ -48,6 +70,8 @@ def merge_config_overrides(
         return spec
     merged = dict(spec.config)
     for key, value in overrides.items():
+        if key == "bucket":
+            _validate_bucket_override(value)
         merged[key] = value
     merged_spec = NpaWorkflowSpec(
         api_version=spec.api_version,
