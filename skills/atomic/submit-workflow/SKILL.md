@@ -65,7 +65,9 @@ successful `npa skypilot verify --cluster <exact-context>`:
   actual evaluator decisions control its refinement and terminal routing.
   See the [PAIDF Cosmos3 upgrade guidance](../../../workflows/guides/paidf-cosmos3.md#upgrading-an-existing-installation).
 - **`--var key=value`** to override `config` (e.g. `--var bucket=<real-bucket>`;
-  the reference specs default to `bucket: example-bucket`).
+  the reference specs default to `bucket: example-bucket`). The `bucket` value
+  must be the bare bucket name — no `s3://` scheme, no trailing slash; specs
+  compose `s3://` themselves and malformed overrides fail fast.
 
 ## Gotchas
 
