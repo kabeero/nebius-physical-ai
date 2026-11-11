@@ -501,6 +501,93 @@ def resolve_environment(
     return EnvironmentConfig(project_id=pid, tenant_id=tid, region=reg)
 
 
+def resolve_project_environment(project: str | None) -> EnvironmentConfig | None:
+    """Resolve a project alias, raising instead of guessing or ignoring.
+
+    ``resolve_environment`` treats every unresolvable name as "nothing
+    available" so first-run and teardown flows can fall back to other
+    sources.  That leniency hides two operator-facing mistakes:
+
+    * an alias explicitly typed on the command line that does not exist —
+      usually the Nebius project ID pasted where the config alias belongs —
+      which used to surface much later as a backend preflight error naming
+      internal request fields instead of the mistake itself; and
+    * no alias at all against several configured projects with no default,
+      where silently selecting one would target an arbitrary project.
+
+    Returns:
+        The saved environment, or ``None`` when nothing is configured.
+    Raises:
+        ConfigError: ``project`` is an unknown alias (the message names the
+            available aliases and, when the value is a configured project's
+            ID, the alias it belongs to), or no alias was given while several
+            projects are configured without a default.
+    """
+    yml = _load_yaml()
+    try:
+        proj = _resolve_project_section(yml, project)
+    except ConfigError as exc:
+        if not project:
+            raise exc from None
+        projects = yml.get("projects")
+        if isinstance(projects, dict) and project in projects:
+            # A configured alias with an empty section contributes no
+            # identity, but it must not block a run whose terraform.tfvars
+            # carries parent_id/tenant_id/region on their own.
+            return None
+        raise _explicit_alias_error(yml, project) from None
+
+    pid = str(proj.get("project_id", "") or "")
+    tid = str(proj.get("tenant_id", "") or "")
+    reg = str(proj.get("region", "") or "")
+    if not (pid or tid or reg):
+        return None
+    return EnvironmentConfig(project_id=pid, tenant_id=tid, region=reg)
+
+
+def _explicit_alias_error(yml: dict[str, Any], project: str) -> ConfigError:
+    """Build the accurate error for an explicitly passed unknown alias."""
+
+    sections = {
+        str(alias): (section if isinstance(section, dict) else {})
+        for alias, section in (
+            (yml.get("projects") or {}) if isinstance(yml.get("projects"), dict) else {}
+        ).items()
+    }
+    wanted = project.strip()
+    id_owners = [
+        alias
+        for alias, section in sections.items()
+        if str(section.get("project_id", "") or "").strip() == wanted
+    ]
+    if id_owners:
+        sole = (
+            " The sole configured project is selected automatically when "
+            "--project is omitted."
+            if len(sections) == 1
+            else ""
+        )
+        return ConfigError(
+            f"{project!r} is the Nebius project ID of configured alias "
+            f"{id_owners[0]!r}, not a project alias. Pass --project "
+            f"{id_owners[0]} or set default_project in ~/.npa/config.yaml."
+            f"{sole}"
+        )
+    if not sections:
+        return ConfigError(
+            f"{project!r} is not a configured project alias and no projects "
+            "are configured in ~/.npa/config.yaml. Run `npa configure` to "
+            "save one, or provide the cluster identity another way and omit "
+            "--project."
+        )
+    available = ", ".join(sorted(sections))
+    return ConfigError(
+        f"{project!r} is not a configured project alias. Available: "
+        f"{available}. Pass one of those, or set default_project in "
+        "~/.npa/config.yaml."
+    )
+
+
 def resolve_credentials() -> CredentialsConfig:
     """Resolve user-level credentials from env vars and credentials.yaml."""
     return load_credentials()

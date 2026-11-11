@@ -263,15 +263,31 @@ class MK8sBackend:
                 and request.project.project_id != request.project_id
             ):
                 raise ValueError("mk8s preflight project identities disagree")
-            if not (
-                request.nebius_bin
-                and request.tenant_id
-                and request.region
-                and request.provider_env is not None
-            ):
+            missing = [
+                name
+                for name, value in (
+                    ("nebius_bin", request.nebius_bin),
+                    ("tenant_id", request.tenant_id),
+                    ("region", request.region),
+                )
+                if not value
+            ]
+            if request.provider_env is None:
+                missing.append("provider_env")
+            if missing:
+                # Naming every request field (as this used to) told the
+                # operator nothing: from `npa cluster up` nebius_bin and
+                # provider_env are always wired, so the real gap is an
+                # unresolved project identity.
+                remedy = (
+                    " Resolve the project identity first: pass a configured"
+                    " --project alias or set the missing values in the"
+                    " cluster's terraform.tfvars."
+                    if {"tenant_id", "region"} & set(missing)
+                    else ""
+                )
                 raise ValueError(
-                    "mk8s provider preflight requires nebius_bin, tenant_id, "
-                    "region, and provider_env"
+                    "mk8s provider preflight is missing: " + ", ".join(missing) + remedy
                 )
             from npa.cluster_backends.mk8s_execution import is_verified_unchanged_target
             from npa.cluster_backends.process import run_capture

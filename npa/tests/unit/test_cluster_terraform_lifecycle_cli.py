@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -2799,6 +2800,57 @@ def test_down_with_no_cluster_is_a_true_local_noop(monkeypatch, tmp_path: Path) 
     assert not (tf_dir / ".terraform").exists()
 
 
+def test_down_notes_an_unresolvable_alias_but_still_tears_down(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A `down --project <project ID>` must not silently ignore the value.
+
+    Teardown still proceeds from tfvars and saved cluster state — an alias
+    removed by an earlier teardown must not block cleanup — but the operator
+    sees that the typed alias matched nothing.
+    """
+    home = Path(os.environ["HOME"])
+    npa_dir = home / ".npa"
+    npa_dir.mkdir(parents=True, exist_ok=True)
+    (npa_dir / "config.yaml").write_text(
+        "projects:\n"
+        "  hiring-demo:\n"
+        "    project_id: project-u00demo00000test0xg\n"
+        "    tenant_id: tenant-e00demo00000test0xg\n"
+        "    region: us-central1\n"
+    )
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text('cluster_name = "never-created"\n')
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("no-cluster teardown crossed an external boundary")
+
+    monkeypatch.setattr(tf_mod, "_require_bin", unexpected)
+    monkeypatch.setattr(tf_mod, "_terraform_env", unexpected)
+    monkeypatch.setattr(tf_mod, "_report_drain_blockers", unexpected)
+    monkeypatch.setattr(tf_mod, "_run_stream", unexpected)
+    monkeypatch.setattr(tf_mod, "_run_capture", unexpected)
+
+    result = runner.invoke(
+        app,
+        [
+            "down",
+            "--project",
+            "project-u00demo00000test0xg",
+            "--terraform-dir",
+            str(tf_dir),
+            "--force",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    output = " ".join(result.output.split())
+    assert "is not a configured project alias" in output
+    assert "falling back to terraform.tfvars and the saved cluster state" in output
+    assert "Nothing to do" in result.output
+
+
 def test_down_terminalizes_pre_mutation_operation_without_provider_calls(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -3047,6 +3099,357 @@ def test_up_rejects_an_iam_token_pinned_in_tfvars(monkeypatch, tmp_path: Path) -
     assert result.exit_code != 0
     assert "iam_token" in result.output
     assert stream_calls == []
+
+
+def test_up_fail_fast_when_a_project_id_is_passed_as_the_project_alias(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The ID-for-alias mistake must name itself, not mk8s internals.
+
+    ``--project`` takes the ~/.npa/config.yaml alias. Passing the Nebius
+    project ID instead used to resolve nothing silently and fail much later
+    in the mk8s backend with "provider preflight requires nebius_bin,
+    tenant_id, region, and provider_env" — request fields an operator cannot
+    set — while the recovery block suggested Resume/Destroy commands that
+    repeated the same unresolvable ``--project`` value.
+    """
+    home = Path(os.environ["HOME"])
+    npa_dir = home / ".npa"
+    npa_dir.mkdir(parents=True, exist_ok=True)
+    (npa_dir / "config.yaml").write_text(
+        "projects:\n"
+        "  hiring-demo:\n"
+        "    project_id: project-u00demo00000test0xg\n"
+        "    tenant_id: tenant-e00demo00000test0xg\n"
+        "    region: us-central1\n"
+    )
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    # No terraform.tfvars: the saved alias is the only identity source.
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError(
+            "an unresolvable --project must fail before any Terraform work"
+        )
+
+    monkeypatch.setattr(tf_mod, "_require_bin", unexpected)
+    monkeypatch.setattr(tf_mod, "_preflight_provider_lock", unexpected)
+    monkeypatch.setattr(tf_mod, "_terraform_env", unexpected)
+
+    result = runner.invoke(
+        app,
+        [
+            "up",
+            "--project",
+            "project-u00demo00000test0xg",
+            "--context",
+            "npa-cluster",
+            "--terraform-dir",
+            str(tf_dir),
+            "--skip-validate",
+            "--skip-sky-smoke",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    output = " ".join(result.output.split())
+    # The error names the real mistake and the correct alias to use.
+    assert "hiring-demo" in output
+    assert "project ID" in output
+    assert "mk8s provider preflight" not in output
+    # A pure usage error must not journal a recovery operation or suggest
+    # commands repeating the unresolvable value.
+    assert "Provisioning operation:" not in output
+    assert "Resume:" not in output
+    assert "Destroy:" not in output
+    assert not (npa_dir / "operations").exists()
+
+
+def test_up_fail_fast_when_the_alias_is_not_configured_at_all(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A typo'd alias lists the aliases that do exist."""
+
+    home = Path(os.environ["HOME"])
+    npa_dir = home / ".npa"
+    npa_dir.mkdir(parents=True, exist_ok=True)
+    (npa_dir / "config.yaml").write_text(
+        "projects:\n"
+        "  alpha:\n"
+        "    project_id: project-a\n"
+        "    tenant_id: tenant-a\n"
+        "    region: eu-north1\n"
+    )
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError(
+            "an unresolvable --project must fail before any Terraform work"
+        )
+
+    monkeypatch.setattr(tf_mod, "_require_bin", unexpected)
+    monkeypatch.setattr(tf_mod, "_preflight_provider_lock", unexpected)
+
+    result = runner.invoke(
+        app,
+        [
+            "up",
+            "--project",
+            "alfa",
+            "--terraform-dir",
+            str(tf_dir),
+            "--skip-validate",
+            "--skip-sky-smoke",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    output = " ".join(result.output.split())
+    assert "'alfa' is not a configured project alias" in output
+    assert "Available: alpha" in output
+    assert "terraform.tfvars" in output
+    assert "Resume:" not in output
+
+
+def test_up_fail_fast_when_no_default_among_several_projects(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """No alias and no default must not silently pick an arbitrary project."""
+
+    home = Path(os.environ["HOME"])
+    npa_dir = home / ".npa"
+    npa_dir.mkdir(parents=True, exist_ok=True)
+    (npa_dir / "config.yaml").write_text(
+        "projects:\n"
+        "  alpha:\n"
+        "    project_id: project-a\n"
+        "    tenant_id: tenant-a\n"
+        "    region: eu-north1\n"
+        "  beta:\n"
+        "    project_id: project-b\n"
+        "    tenant_id: tenant-b\n"
+        "    region: eu-north1\n"
+    )
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    # No terraform.tfvars: the saved project is the only identity source.
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError(
+            "an ambiguous project choice must fail before any Terraform work"
+        )
+
+    monkeypatch.setattr(tf_mod, "_require_bin", unexpected)
+    monkeypatch.setattr(tf_mod, "_preflight_provider_lock", unexpected)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code == 2, result.output
+    output = " ".join(result.output.split())
+    assert "No project selected" in output
+    assert "alpha" in output and "beta" in output
+    # `cluster up` has no -p short flag, so the suggestion must not offer one.
+    assert "-p/--project" not in output
+    assert "Resume:" not in output
+    assert not (npa_dir / "operations").exists()
+
+
+def test_up_failure_recovery_commands_omit_an_empty_project_flag(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Resume/Destroy suggestions must be runnable as printed.
+
+    A failed `up` that never passed --project used to render `--project `
+    with an empty value into both suggestions — pasting them back either
+    bound --project to the following flag or failed on the missing argument.
+    """
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfvars").write_text(
+        "\n".join(
+            [
+                'parent_id = "project-a"',
+                'tenant_id = "tenant-a"',
+                'region = "us-central1"',
+                'cluster_name = "quota-cluster"',
+                "gpu_nodes_count = 1",
+                'gpu_nodes_platform = "gpu-rtx6000"',
+                'gpu_nodes_preset = "1gpu-24vcpu-218gb"',
+            ]
+        )
+        + "\n"
+    )
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
+            return _completed(
+                json.dumps({"spec": {"limit": "0"}, "status": {"usage": "0"}})
+            )
+        if args[:4] == ["nebius", "capacity", "resource-advice", "list"]:
+            return _completed(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "spec": {
+                                    "region": "us-central1",
+                                    "compute_instance": {
+                                        "platform": "gpu-rtx6000",
+                                        "preset": {"name": "1gpu-24vcpu-218gb"},
+                                    },
+                                },
+                                "status": {
+                                    "on_demand": {
+                                        "availability_level": (
+                                            "AVAILABILITY_LEVEL_LIMIT_REACHED"
+                                        )
+                                    },
+                                    "preemptible": {
+                                        "availability_level": (
+                                            "AVAILABILITY_LEVEL_HIGH"
+                                        ),
+                                        "available": 44,
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = runner.invoke(
+        app,
+        ["up", "--terraform-dir", str(tf_dir), "--skip-validate", "--skip-sky-smoke"],
+    )
+
+    assert result.exit_code != 0
+    assert "GPU quota is insufficient" in result.output
+    output = " ".join(result.output.split())
+    assert "Resume: npa cluster up --context quota-cluster" in output
+    assert "Destroy: npa cluster down --context quota-cluster" in output
+    assert "--project" not in output
+
+
+def test_up_failure_recovery_commands_repeat_a_resolvable_alias(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A failed `up` with a valid alias resumes with that alias intact."""
+
+    home = Path(os.environ["HOME"])
+    npa_dir = home / ".npa"
+    npa_dir.mkdir(parents=True, exist_ok=True)
+    (npa_dir / "config.yaml").write_text(
+        "projects:\n"
+        "  alpha:\n"
+        "    project_id: project-a\n"
+        "    tenant_id: tenant-a\n"
+        "    region: eu-north1\n"
+    )
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    tf_dir = tmp_path / "deploy" / "cluster"
+    tf_dir.mkdir(parents=True)
+    # Identity (parent_id/tenant_id/region) deliberately comes from the alias,
+    # not tfvars; only the GPU topology is pinned here.
+    (tf_dir / "terraform.tfvars").write_text(
+        "\n".join(
+            [
+                "gpu_nodes_count = 1",
+                'gpu_nodes_platform = "gpu-rtx6000"',
+                'gpu_nodes_preset = "1gpu-24vcpu-218gb"',
+            ]
+        )
+        + "\n"
+    )
+    stream_calls: list[list[str]] = []
+
+    def fake_capture(args, **kwargs):
+        if args[:2] == ["terraform", "version"]:
+            return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["nebius", "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
+            return _completed('{"items":[]}')
+        if args[:2] == ["terraform", "state"]:
+            return _completed("", returncode=1)
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
+            return _completed(
+                json.dumps({"spec": {"limit": "0"}, "status": {"usage": "0"}})
+            )
+        if args[:4] == ["nebius", "capacity", "resource-advice", "list"]:
+            return _completed(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "spec": {
+                                    "region": "eu-north1",
+                                    "compute_instance": {
+                                        "platform": "gpu-rtx6000",
+                                        "preset": {"name": "1gpu-24vcpu-218gb"},
+                                    },
+                                },
+                                "status": {
+                                    "on_demand": {
+                                        "availability_level": (
+                                            "AVAILABILITY_LEVEL_LIMIT_REACHED"
+                                        )
+                                    },
+                                    "preemptible": {
+                                        "availability_level": (
+                                            "AVAILABILITY_LEVEL_HIGH"
+                                        ),
+                                        "available": 44,
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_stream", _successful_stream(tf_dir, stream_calls))
+    monkeypatch.setattr(tf_mod, "_run_capture", fake_capture)
+
+    result = runner.invoke(
+        app,
+        [
+            "up",
+            "--project",
+            "alpha",
+            "--terraform-dir",
+            str(tf_dir),
+            "--skip-validate",
+            "--skip-sky-smoke",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "GPU quota is insufficient" in result.output
+    output = " ".join(result.output.split())
+    assert "Using saved project settings" in output
+    assert "Resume: npa cluster up --project alpha --context npa-cluster" in output
+    assert "Destroy: npa cluster down --project alpha --context npa-cluster" in output
 
 
 def test_up_stops_before_apply_when_the_gpu_quota_is_zero(
