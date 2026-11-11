@@ -469,6 +469,43 @@ def default_project_name() -> str:
     return yml.get("default_project", "default")
 
 
+def effective_project_name(project: str | None = None) -> str:
+    """Return the alias a command should use when none was passed.
+
+    ``default_project_name()`` returns the literal ``"default"`` when the
+    config has no ``default_project`` key, naming no configured project.
+    That literal then fails project lookup as an unknown alias, so a sole
+    fully-configured project surfaced a misleading missing-identity error.
+    Mirror the fallback order in ``_resolve_project_section`` instead: an
+    explicit alias, then the configured default, then the sole configured
+    project, with a clear selection error when several candidates exist.
+
+    Args:
+        project: Explicit alias from the caller; returned unchanged when set.
+    Returns:
+        The alias a command should act on.
+    Raises:
+        ConfigError: No default_project is configured and several projects
+            are, so no alias can be selected unambiguously.
+    """
+    if project:
+        return str(project)
+    yml = _load_yaml()
+    projects = yml.get("projects")
+    if not (isinstance(projects, dict) and projects):
+        return str(yml.get("default_project", "default") or "default")
+    default_name = str(yml.get("default_project", "") or "")
+    if default_name and default_name in projects:
+        return default_name
+    if len(projects) == 1:
+        return str(next(iter(projects.keys())))
+    raise ConfigError(
+        "No project selected and no default_project configured. "
+        f"Pass -p/--project (available: {', '.join(projects.keys())}) "
+        "or set default_project in ~/.npa/config.yaml."
+    )
+
+
 def default_workbench_name() -> str:
     yml = _load_yaml()
     return yml.get("default_workbench", "default")

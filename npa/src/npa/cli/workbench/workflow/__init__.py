@@ -1802,9 +1802,13 @@ def submit_cmd(
         _fail("--recover-managed-job-id must be one decimal managed-job ID")
         return
     if not project:
-        from npa.clients.config import default_project_name
+        from npa.clients.config import ConfigError, effective_project_name
 
-        project = default_project_name()
+        try:
+            project = effective_project_name()
+        except ConfigError as exc:
+            _fail(str(exc))
+            return
     workflow_identity = ""
     if is_npa_spec:
         assert merged_npa_spec is not None

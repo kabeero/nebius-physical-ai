@@ -181,14 +181,25 @@ def resolve_execution_target(
     provenance: Mapping[str, str] | None = None,
     output_kinds: Mapping[str, str] | None = None,
 ) -> ExecutionTarget:
-    from npa.clients.config import default_project_name, resolve_environment
+    from npa.clients.config import (
+        ConfigError,
+        effective_project_name,
+        resolve_environment,
+    )
 
-    alias = project or default_project_name()
+    # An unconfigured default_project must fall back to the sole configured
+    # project rather than invent the literal "default" alias, which names
+    # nothing and would surface here as a misleading missing-identity error.
+    try:
+        alias = effective_project_name(project)
+    except ConfigError as exc:
+        raise ExecutionPreflightError("scope", str(exc)) from exc
     saved = resolve_environment(alias)
     if saved is None or not saved.project_id or not saved.tenant_id or not saved.region:
         raise ExecutionPreflightError(
             "scope",
-            "selected project requires saved project, tenant and region identity",
+            "selected project requires saved project, tenant and region identity; "
+            "run `npa configure` to save them",
         )
     if project_id and project_id != saved.project_id:
         raise ExecutionPreflightError(
