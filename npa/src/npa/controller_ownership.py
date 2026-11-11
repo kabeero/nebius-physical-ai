@@ -12,7 +12,8 @@ from npa.clients.config import (
     resolve_environment,
     update_config_document,
 )
-from npa.cluster.state import load_cluster_state
+from npa.cluster.exceptions import ClusterStateError
+from npa.cluster.state import list_local_clusters, load_cluster_state
 
 
 class ClusterOwnerIdentityMismatchError(RuntimeError):
@@ -85,6 +86,65 @@ def _owner_from_mapping(value: object) -> ControllerOwner | None:
     )
 
 
+def _adopted_cluster_summary() -> str:
+    """Summarize locally adopted cluster contexts for a refusal message.
+
+    Returns:
+        A comma-separated ``context (cluster-id)`` list, or an empty string
+        when no readable local cluster identity exists.
+    """
+
+    try:
+        clusters = list_local_clusters()
+    except ClusterStateError:
+        # A malformed sibling record must not replace the refusal reason;
+        # the operator still needs the missing-identity remedy below.
+        return ""
+    return ", ".join(
+        f"{cluster.name} ({cluster.cluster_id})" for cluster in clusters
+    )
+
+
+def _missing_cluster_identity_message(project_alias: str, context: str) -> str:
+    """Explain the missing-identity refusal with the exact adoption remedy.
+
+    Args:
+        project_alias: Selected NPA project alias for the suggested commands.
+        context: The Kubernetes context that has no local cluster identity.
+
+    Returns:
+        The full error message for the controller-adoption refusal.
+    """
+
+    summary = _adopted_cluster_summary()
+    lines = [
+        f"No NPA cluster identity exists for context {context!r}; refusing "
+        "controller adoption.",
+        "A reachable kubeconfig context alone is not sufficient: submit reads the "
+        "local cluster identity that `npa cluster up` or `npa cluster kubeconfig` "
+        "writes.",
+    ]
+    if summary:
+        lines.append(
+            f"Locally adopted cluster contexts: {summary}. Submit with one of "
+            "those contexts, or adopt this exact cluster with:"
+        )
+    else:
+        lines.append(
+            "No cluster is adopted locally yet (`npa cluster status` may still "
+            "list provider clusters). Adopt this exact cluster with:"
+        )
+    lines.append(
+        "  npa cluster kubeconfig --cluster-name <provider-cluster-name> "
+        f"--project {project_alias} --context {context}"
+    )
+    lines.append("then bind the shared jobs controller with:")
+    lines.append(
+        f"  npa skypilot bind-controller --project {project_alias} --context {context}"
+    )
+    return "\n".join(lines)
+
+
 def resolve_controller_candidate(project: str, context: str) -> ControllerOwner:
     alias = str(project or default_project_name() or "").strip()
     if not alias or not context:
@@ -99,7 +159,7 @@ def resolve_controller_candidate(project: str, context: str) -> ControllerOwner:
     cluster = load_cluster_state(context)
     if cluster is None:
         raise ClusterOwnerIdentityMismatchError(
-            f"No NPA cluster identity exists for context {context!r}; refusing controller adoption."
+            _missing_cluster_identity_message(alias, context)
         )
     if cluster.project_id != environment.project_id:
         raise ClusterOwnerIdentityMismatchError(
