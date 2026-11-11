@@ -138,6 +138,56 @@ def test_list_projects_and_defaults(isolated_config: Path) -> None:
     assert config.default_workbench_name() == "wb-a"
 
 
+def _write_projects_config(path: Path, projects: dict, default: str | None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {"projects": projects}
+    if default is not None:
+        data["default_project"] = default
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+
+
+def test_effective_project_name_falls_back_to_sole_project(isolated_config: Path) -> None:
+    _write_projects_config(
+        isolated_config,
+        {"only-project": {"project_id": "project-1", "region": "eu-north1"}},
+        default=None,
+    )
+
+    # No default_project key: the sole configured project is the unambiguous
+    # selection, not the literal "default" alias that names nothing.
+    assert config.effective_project_name() == "only-project"
+    assert config.effective_project_name("explicit") == "explicit"
+
+
+def test_effective_project_name_uses_configured_default(isolated_config: Path) -> None:
+    _write_projects_config(
+        isolated_config,
+        {
+            "proj-a": {"project_id": "project-1"},
+            "proj-b": {"project_id": "project-2"},
+        },
+        default="proj-b",
+    )
+
+    assert config.effective_project_name() == "proj-b"
+
+
+def test_effective_project_name_requires_selection_when_ambiguous(
+    isolated_config: Path,
+) -> None:
+    _write_projects_config(
+        isolated_config,
+        {
+            "proj-a": {"project_id": "project-1"},
+            "proj-b": {"project_id": "project-2"},
+        },
+        default=None,
+    )
+
+    with pytest.raises(config.ConfigError, match="Pass -p/--project"):
+        config.effective_project_name()
+
+
 def test_resolve_environment_uses_yaml_and_cli_overrides(isolated_config: Path) -> None:
     _write_full_config(isolated_config)
 

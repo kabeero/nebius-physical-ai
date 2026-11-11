@@ -18,6 +18,7 @@ from npa.execution_preflight import (
     verify_serverless_execution,
     verify_serverless_gpu,
 )
+from npa.clients.config import ConfigError
 from npa.orchestration.skypilot.k8s_runtime_class import (
     verify_kubernetes_runtime_classes,
 )
@@ -249,6 +250,65 @@ def target(**kwargs):
         ),
         **kwargs,
     )
+
+
+def test_target_resolution_selects_sole_configured_project(monkeypatch):
+    """A missing default_project key must not invent the "default" alias.
+
+    A config with exactly one project and no default_project is an
+    unambiguous selection: the preflight target must resolve to that
+    project instead of failing project lookup as an unknown alias.
+    """
+    env = SimpleNamespace(
+        project_id="project-unit", tenant_id="tenant-unit", region="eu-west1"
+    )
+    requested = []
+    monkeypatch.setattr(
+        "npa.clients.config.effective_project_name",
+        lambda project=None: requested.append(project) or "sole-project",
+    )
+    monkeypatch.setattr("npa.clients.config.resolve_environment", lambda project: env)
+
+    selected = resolve_execution_target(
+        project="",
+        context="unit-context",
+        credentials=SubmitCredentialContext(),
+    )
+
+    assert requested == [""]
+    assert selected.project == "sole-project"
+    assert selected.project_id == "project-unit"
+    assert selected.provenance["project"] == "project.default"
+
+
+def test_target_resolution_requires_selection_when_projects_ambiguous(monkeypatch):
+    def unavailable(project=None):
+        raise ConfigError(
+            "No project selected and no default_project configured. "
+            "Pass -p/--project (available: proj-a, proj-b) "
+            "or set default_project in ~/.npa/config.yaml."
+        )
+
+    monkeypatch.setattr(
+        "npa.clients.config.effective_project_name", unavailable
+    )
+
+    with pytest.raises(ExecutionPreflightError, match="Pass -p/--project") as caught:
+        resolve_execution_target(project="", credentials=SubmitCredentialContext())
+
+    assert caught.value.check == "scope"
+
+
+def test_target_resolution_hints_configure_when_identity_missing(monkeypatch):
+    monkeypatch.setattr(
+        "npa.clients.config.effective_project_name", lambda project=None: "alias"
+    )
+    monkeypatch.setattr("npa.clients.config.resolve_environment", lambda project: None)
+
+    with pytest.raises(ExecutionPreflightError, match="npa configure") as caught:
+        resolve_execution_target(project="", credentials=SubmitCredentialContext())
+
+    assert caught.value.check == "scope"
 
 
 def test_exact_prefix_roundtrip_uses_executing_principal_and_safe_report(provider):
