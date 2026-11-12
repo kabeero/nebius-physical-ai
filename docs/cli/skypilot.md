@@ -13,6 +13,8 @@ Commands
 bootstrap  Install SkyPilot into an isolated, idempotent virtualenv.
 uninstall  Remove the isolated SkyPilot venv and clear the saved sky binary.
 status  Report the isolated SkyPilot runtime status.
+mount  Mount a running SkyPilot cluster's sky_logs directory over sshfs.
+unmount  Unmount the sshfs-mounted SkyPilot cluster directory.
 cleanup-controller  Tear down NPA's shared jobs controller after its managed jobs drain.
 bind-controller  Bind the shared jobs controller to one immutable project/cluster identity.
 verify  Verify the runtime, using an owned API for an explicit Kubernetes target.
@@ -31,6 +33,8 @@ verify  Verify the runtime, using an owned API for an explicit Kubernetes target
 | `bootstrap` | Install SkyPilot into an isolated, idempotent virtualenv. |
 | `uninstall` | Remove the isolated SkyPilot venv and clear the saved sky binary. |
 | `status` | Report the isolated SkyPilot runtime status. |
+| `mount` | Mount a running SkyPilot cluster's sky_logs directory over sshfs. |
+| `unmount` | Unmount the sshfs-mounted SkyPilot cluster directory. |
 | `cleanup-controller` | Tear down NPA's shared jobs controller after its managed jobs drain. |
 | `bind-controller` | Bind the shared jobs controller to one immutable project/cluster identity. |
 | `verify` | Verify the runtime, using an owned API for an explicit Kubernetes target. |

@@ -76,6 +76,13 @@ CONSTRAINTS_FILE = Path(__file__).with_name("skypilot-constraints.txt")
 SKYPILOT_MIN_PYTHON = (3, 11)
 SKYPILOT_MAX_PYTHON = (3, 12)
 _PREFERRED_PYTHON_BINS = ("python3.12", "python3.11")
+# `npa skypilot mount` exposes only the cluster's sky_logs directory over
+# sshfs; the rest of the cluster filesystem (binaries, runtime, caches) stays
+# unexposed on purpose.
+SSHFS_REMOTE_DIR = "sky_logs"
+SSHFS_MOUNT_TIMEOUT = 60
+UNMOUNT_TIMEOUT = 15
+_PROC_MOUNTS = "/proc/mounts"
 
 
 def _supported_python_range_str() -> str:
@@ -386,6 +393,389 @@ def status_cmd(
     )
     summary = _summarize_completed_process(result)
     typer.echo(f"sky_check: {summary}")
+
+
+@dataclass(frozen=True)
+class SkySshHost:
+    """A SkyPilot-generated SSH host candidate under ~/.sky/generated/ssh."""
+
+    alias: str
+    hostname: str
+    path: Path
+    mtime: float
+
+
+@dataclass(frozen=True)
+class MountState:
+    """Local mount-point state: "none", "sshfs", or "other"."""
+
+    status: str
+    host: str | None  # sshfs source alias, e.g. "sky-jobs-controller-..."
+
+
+def _sky_ssh_dir() -> Path:
+    """Directory where SkyPilot writes generated per-cluster SSH configs."""
+
+    return Path.home() / ".sky" / "generated" / "ssh"
+
+
+def _ssh_config_path() -> Path:
+    """Local SSH config SkyPilot appends its Include stanza to."""
+
+    return Path.home() / ".ssh" / "config"
+
+
+def _default_mount_point() -> Path:
+    return Path.home() / "sky"
+
+
+def _ssh_directive_value(text: str, directive: str) -> str | None:
+    """First value of an SSH config directive (e.g. ``Host`` or ``HostName``)."""
+
+    pattern = re.compile(rf"^\s*{directive}\s+(\S+)\s*$", re.IGNORECASE | re.MULTILINE)
+    match = pattern.search(text)
+    return match.group(1) if match else None
+
+
+def _parse_sky_ssh_hosts(sky_ssh_dir: Path) -> list[SkySshHost]:
+    """Parse SkyPilot-generated SSH config files into host candidates.
+
+    Args:
+        sky_ssh_dir: Directory to scan, normally ``~/.sky/generated/ssh``.
+
+    Returns:
+        Hosts for every readable file that declares both ``Host`` and
+        ``HostName``, sorted oldest first.
+    """
+
+    hosts: list[SkySshHost] = []
+    if not sky_ssh_dir.is_dir():
+        return hosts
+    for entry in sorted(sky_ssh_dir.iterdir()):
+        if not entry.is_file():
+            continue
+        try:
+            text = entry.read_text(encoding="utf-8", errors="replace")
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        alias = _ssh_directive_value(text, "Host")
+        hostname = _ssh_directive_value(text, "HostName")
+        if not alias or not hostname:
+            continue
+        hosts.append(
+            SkySshHost(alias=alias, hostname=hostname, path=entry, mtime=mtime)
+        )
+    return hosts
+
+
+def _ssh_config_references_host(ssh_config: Path, alias: str) -> bool:
+    """Check whether ~/.ssh/config resolves the host (Include or Host stanza)."""
+
+    try:
+        text = ssh_config.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    if re.search(r"(?mi)^\s*Include\s+.*\.sky[/\\]generated[/\\]ssh", text):
+        return True
+    return bool(re.search(rf"(?mi)^\s*Host\s+\S*{re.escape(alias)}\b", text))
+
+
+def _unescape_mount_path(value: str) -> str:
+    """Undo the octal escapes /proc/mounts applies to mount-point paths."""
+
+    return (
+        value.replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
+    )
+
+
+def _is_mounted(mount_point: Path) -> bool:
+    return os.path.ismount(mount_point)
+
+
+def _mount_state(mount_point: Path) -> MountState:
+    """Classify the local mount point: unmounted, sshfs, or another filesystem.
+
+    Args:
+        mount_point: Local path to inspect.
+
+    Returns:
+        A ``MountState``; for sshfs mounts the source host alias is included.
+    """
+
+    if not _is_mounted(mount_point):
+        return MountState("none", None)
+    try:
+        with open(_PROC_MOUNTS, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                fields = line.split()
+                if len(fields) < 3:
+                    continue
+                if _unescape_mount_path(fields[1]) != str(mount_point):
+                    continue
+                if fields[2] in ("fuse.sshfs", "sshfs"):
+                    host = fields[0].split(":", 1)[0] or None
+                    return MountState("sshfs", host)
+                return MountState("other", None)
+    except OSError:
+        pass
+    # Mounted (os.path.ismount) but not described in /proc/mounts (e.g. macOS):
+    # we cannot prove it is an sshfs mount we manage, so stay conservative.
+    return MountState("other", None)
+
+
+def _resolve_sshfs_bin() -> str | None:
+    return shutil.which("sshfs")
+
+
+def _resolve_unmount_argv(mount_point: Path) -> list[str] | None:
+    """First available unmount invocation: fusermount3 -u, fusermount -u, umount."""
+
+    for binary in ("fusermount3", "fusermount"):
+        found = shutil.which(binary)
+        if found:
+            return [found, "-u", str(mount_point)]
+    found = shutil.which("umount")
+    if found:
+        return [found, str(mount_point)]
+    return None
+
+
+def _run_mount_tool(
+    argv: list[str], *, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Run a mount/unmount subprocess with a bounded timeout; never raises."""
+
+    try:
+        return subprocess.run(
+            argv, capture_output=True, text=True, check=False, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        return subprocess.CompletedProcess(
+            argv, 124, stdout="", stderr=stderr or f"timed out after {timeout:.0f}s"
+        )
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(argv, 127, stdout="", stderr=str(exc))
+    except OSError as exc:
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr=str(exc))
+
+
+def _format_host_choices(
+    hosts: list[SkySshHost], *, mounted_alias: str | None = None
+) -> str:
+    """Render host candidates newest first, tagging the mounted/most recent."""
+
+    newest_alias = (
+        max(hosts, key=lambda candidate: candidate.mtime).alias if hosts else None
+    )
+    lines = []
+    for candidate in sorted(hosts, key=lambda host: host.mtime, reverse=True):
+        tags = []
+        if mounted_alias is not None and candidate.alias == mounted_alias:
+            tags.append("mounted")
+        if len(hosts) > 1 and candidate.alias == newest_alias:
+            tags.append("most recent")
+        stamp = datetime.fromtimestamp(candidate.mtime).strftime("%Y-%m-%d %H:%M")
+        suffix = f" ({', '.join(tags)})" if tags else ""
+        lines.append(f"  {candidate.alias} — modified {stamp}{suffix}")
+    return "\n".join(lines)
+
+
+def _premature_submission_message(sky_ssh_dir: Path) -> str:
+    return (
+        f"No SkyPilot SSH configs under {sky_ssh_dir}. SkyPilot creates them "
+        "once your run's cluster is up — please run this after "
+        "`npa workbench workflow submit` (check progress with "
+        "`npa workbench workflow status`). If your submission used "
+        "--isolated-config-dir, SSH state lives under that directory's home "
+        "instead."
+    )
+
+
+def _select_mount_host(hosts: list[SkySshHost], host: str) -> SkySshHost | None:
+    """Resolve the validated --host flag against parsed candidates; None after _fail."""
+
+    if host:
+        for candidate in hosts:
+            if candidate.alias == host:
+                return candidate
+        # Unreachable in the CLI path: --host is validated before state checks.
+        _fail(
+            f"unknown --host '{host}'; available: "
+            + ", ".join(sorted(candidate.alias for candidate in hosts))
+        )
+        return None
+    if len(hosts) == 1:
+        return hosts[0]
+    _fail(
+        "Multiple SkyPilot SSH configs found; pass --host to choose one:\n"
+        + _format_host_choices(hosts)
+    )
+    return None
+
+
+@app.command("mount")
+def mount_cmd(
+    host: str = typer.Option(
+        "",
+        "--host",
+        help=(
+            "SkyPilot SSH host alias to mount. Defaults to the only host; "
+            "required when several exist."
+        ),
+    ),
+    mount_point: Path | None = typer.Option(
+        None,
+        "--mount-point",
+        help=(
+            f"Local mount point. Defaults to ~/sky. Only the cluster's "
+            f"{SSHFS_REMOTE_DIR} directory is mounted."
+        ),
+    ),
+) -> None:
+    """Mount a running SkyPilot cluster's sky_logs directory over sshfs.
+
+    Run this after `npa workbench workflow submit` has started a run: SkyPilot
+    must have written the cluster's SSH config under ~/.sky/generated/ssh and
+    the matching Include stanza into ~/.ssh/config.
+    """
+
+    sshfs_bin = _resolve_sshfs_bin()
+    if sshfs_bin is None:
+        _fail(
+            "sshfs is not installed (required to mount the cluster filesystem). "
+            "Install it first, e.g. `sudo apt-get install sshfs`, then re-run."
+        )
+        return
+
+    hosts = _parse_sky_ssh_hosts(_sky_ssh_dir())
+    if not hosts:
+        _fail(_premature_submission_message(_sky_ssh_dir()))
+        return
+
+    # Validate --host before any state reporting so an invalid alias fails
+    # fast even when the mount point is already mounted.
+    if host and all(candidate.alias != host for candidate in hosts):
+        _fail(
+            f"unknown --host '{host}'; available: "
+            + ", ".join(sorted(candidate.alias for candidate in hosts))
+        )
+        return
+
+    target = mount_point or _default_mount_point()
+    state = _mount_state(target)
+    if state.status == "sshfs":
+        typer.echo(f"{target} is already mounted over sshfs.")
+        if state.host:
+            typer.echo(f"mounted host: {state.host}")
+        if len(hosts) > 1:
+            typer.echo("available SkyPilot SSH hosts:")
+            typer.echo(_format_host_choices(hosts, mounted_alias=state.host))
+            if host and host != state.host:
+                typer.echo(
+                    f"to switch to {host}: `npa skypilot unmount`, then "
+                    f"`npa skypilot mount --host {host}`."
+                )
+        return
+    if state.status == "other":
+        _fail(
+            f"{target} is a mount point for another filesystem; refusing to "
+            "mount over it."
+        )
+        return
+
+    selected = _select_mount_host(hosts, host)
+    if selected is None:
+        return
+
+    if not _ssh_config_references_host(_ssh_config_path(), selected.alias):
+        _fail(
+            f"~/.ssh/config has no SkyPilot stanza for '{selected.alias}' — "
+            "expected `Include ~/.sky/generated/ssh/*`. Re-run after the "
+            "submission has started, or add the Include line manually."
+        )
+        return
+
+    try:
+        occupied = target.exists() and any(target.iterdir())
+    except OSError:
+        occupied = False
+    if occupied:
+        _fail(
+            f"{target} exists and is not empty; refusing to mount over it. "
+            "Clear it or pass --mount-point."
+        )
+        return
+
+    target.mkdir(parents=True, exist_ok=True)
+    typer.echo(f"mounting {selected.alias}:{SSHFS_REMOTE_DIR} -> {target} ...")
+    result = _run_mount_tool(
+        [sshfs_bin, f"{selected.alias}:{SSHFS_REMOTE_DIR}", str(target)],
+        timeout=SSHFS_MOUNT_TIMEOUT,
+    )
+    if result.returncode != 0 or not _is_mounted(target):
+        detail = _combined_output(result) or "sshfs produced no output"
+        _fail(
+            f"sshfs failed to mount {selected.alias}:{SSHFS_REMOTE_DIR} at "
+            f"{target}: {detail}. The cluster may be unreachable (proxy down "
+            "or cluster terminated); check `npa workbench workflow status`."
+        )
+        return
+    typer.echo(f"mounted {selected.alias}:{SSHFS_REMOTE_DIR} at {target}")
+    typer.echo("unmount with: npa skypilot unmount")
+
+
+@app.command("unmount")
+def unmount_cmd(
+    mount_point: Path | None = typer.Option(
+        None,
+        "--mount-point",
+        help="Local mount point. Defaults to ~/sky.",
+    ),
+) -> None:
+    """Unmount the sshfs-mounted SkyPilot cluster directory."""
+
+    target = mount_point or _default_mount_point()
+    state = _mount_state(target)
+    if state.status == "none":
+        typer.echo(f"{target} is not mounted.")
+        return
+    if state.status != "sshfs":
+        _fail(
+            f"{target} is a mount point for another filesystem (not sshfs); "
+            "refusing. Unmount it manually if that is intended."
+        )
+        return
+
+    argv = _resolve_unmount_argv(target)
+    if argv is None:
+        _fail(
+            "no unmount utility found (fusermount3, fusermount, or umount); "
+            "install fuse."
+        )
+        return
+    result = _run_mount_tool(argv, timeout=UNMOUNT_TIMEOUT)
+    if result.returncode != 0 or _is_mounted(target):
+        detail = _combined_output(result) or "no output"
+        fusermount = shutil.which("fusermount3") or shutil.which("fusermount")
+        if fusermount:
+            hint = (
+                f"The mount may be busy; close programs using {target}, or "
+                f"lazy-unmount with `{fusermount} -u -z {target}`."
+            )
+        else:
+            hint = (
+                f"The mount may be busy; close programs using {target}, or "
+                f"force with `umount -f {target}`."
+            )
+        _fail(f"could not unmount {target}: {detail}. {hint}")
+        return
+    suffix = f" (host {state.host})" if state.host else ""
+    typer.echo(f"unmounted {target}{suffix}")
 
 
 @app.command("cleanup-controller")
