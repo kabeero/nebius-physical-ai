@@ -32,6 +32,7 @@ check-input  Check PAIDF MP4 or LeRobot selection and decoding without uploading
 reconcile-controller  Reconcile an orphaned workflow against its original exclusive controller.
 reconcile-absent  Verify original native absence without inferring historical job success.
 catalog  List every discovered npa.workflow spec as tiered catalog tables.
+filter  Narrow the workflow catalog with guided questions or explicit flags.
 trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
 batch  Submit dataset episodes as independent durable workflow runs.
 demo  Run complete public sample workflows and view their results.
@@ -70,6 +71,7 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 | `reconcile-controller` | Reconcile an orphaned workflow against its original exclusive controller. |
 | `reconcile-absent` | Verify original native absence without inferring historical job success. |
 | `catalog` | List every discovered npa.workflow spec as tiered catalog tables. |
+| `filter` | Narrow the workflow catalog with guided questions or explicit flags. |
 | `trigger` | Watch S3-compatible data prefixes and retrigger Workbench workflows. |
 | `batch` | Submit dataset episodes as independent durable workflow runs. |
 | `demo` | Run complete public sample workflows and view their results. |

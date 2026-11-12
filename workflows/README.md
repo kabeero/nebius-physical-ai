@@ -89,6 +89,35 @@ The `sim2real-two-step-agent.yaml` golden snapshot is excluded: it duplicates
 Rows whose `metadata.name` differs from the file name show the file name in
 parentheses; a blank cell means the spec declares nothing for that column.
 
+### Catalog filtering
+
+Narrow the same rows to workflows you can actually run. In a terminal the
+command asks three questions — application category, GPU (an accelerator
+name, any GPU, or CPU only), and whether you have already created an RWX
+PVC — each accepting a blank answer for no filter:
+
+```bash
+npa workbench workflow filter
+```
+
+Answering that no PVC exists hides workflows that declare one, because
+Kubernetes will not schedule their pods until the named claim is bound.
+The result is a short table (name, application, GPU type, PVC, complexity,
+file) sorted by workflow name. Every question can instead be answered with
+a flag, which also makes the command scriptable:
+
+```bash
+npa workbench workflow filter --application robotics-policy --no-pvc
+npa workbench workflow filter --gpu B200 --tier main
+npa workbench workflow filter --gpu none --json   # filters echoed with rows
+```
+
+`--application` accepts `uncategorized` for rows the keyword lookup leaves
+blank; `--gpu` accepts `any`, `none`, or an accelerator name with the count
+stripped (`B200`, not `8x B200`). Running `filter` with no flags and no
+terminal fails with the flag forms rather than printing the full table;
+use `catalog` for that.
+
 Workflows that pass an image into provenance or native child launches declare
 `config.required_immutable_images: [<config-key>, ...]`. Supply each key through
 `--var <config-key>=<registry>/<repository>@sha256:<64-hex-digest>` when planning
