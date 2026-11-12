@@ -4981,6 +4981,52 @@ def test_wait_for_controller_proceeds_when_up(monkeypatch) -> None:
     )
 
 
+def test_wait_for_controller_accepts_pinned_allowed_clouds_notice(
+    monkeypatch,
+) -> None:
+    """SkyPilot 0.12.2 prints the config notice ahead of status JSON.
+
+    The per-submit client config pins ``allowed_clouds`` while the long-lived
+    API server holds a different value, so every health-check ``sky status``
+    stream starts with the pinned notice.  Admission must mirror the queue
+    parser's, or a healthy controller read fails as non-json output.
+    """
+
+    def notice_run(cmd, **_kwargs):
+        payload = json.dumps(
+            {"clusters": [{"name": "sky-jobs-controller-abc123", "status": "UP"}]}
+        )
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=0,
+            stdout=_ALLOWED_CLOUDS_NOTICE + "\n" + payload,
+            stderr="",
+        )
+
+    monkeypatch.setattr(workflow_module.subprocess, "run", notice_run)
+
+    workflow_module._wait_for_healthy_jobs_controller(
+        "sky", env={}, timeout=0, interval=0.01
+    )
+
+
+def test_controller_non_json_health_failure_is_preflight_only(monkeypatch) -> None:
+    """A health-check parse failure precedes launch and must not claim one."""
+
+    def non_json_run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout="diagnostic only", stderr=""
+        )
+
+    monkeypatch.setattr(workflow_module.subprocess, "run", non_json_run)
+
+    with pytest.raises(SkyPilotSubmitError, match="non-json output") as caught:
+        workflow_module._wait_for_healthy_jobs_controller(
+            "sky", env={}, timeout=0, interval=0.01
+        )
+    assert caught.value.launch_attempted is False
+
+
 def test_controller_cwd_probe_rejects_deleted_working_directory() -> None:
     calls: list[list[str]] = []
     pod_payload = json.dumps(
