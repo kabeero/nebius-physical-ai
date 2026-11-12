@@ -1018,6 +1018,9 @@ skills:
       - type: cli_help
         args: ["skypilot", "bootstrap", "--help"]
         contains: "SkyPilot"
+      - type: cli_help
+        args: ["skypilot", "mount", "--help"]
+        contains: "sshfs"
   - name: sonic
     category: tools
     when_to_use: "SONIC whole-body-control training, export, evaluation, serving, GPU routing, and validation."

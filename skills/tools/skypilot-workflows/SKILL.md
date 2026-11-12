@@ -106,6 +106,23 @@ already resolves them. The CLI restores the caller's environment afterward.
 An isolated API still rejects any later credential or configuration change;
 finish source staging before starting that API.
 
+## Cluster Log Access (sshfs)
+
+`npa skypilot mount` exposes a running submission's logs locally: it mounts
+only the cluster's `sky_logs` directory over sshfs at `~/sky` (override with
+`--mount-point`). Run it after `npa workbench workflow submit` has started —
+the command verifies sshfs is installed, that SkyPilot wrote SSH configs under
+`~/.sky/generated/ssh`, and that `~/.ssh/config` resolves the host (normally via
+`Include ~/.sky/generated/ssh/*`), and fails with premature-run guidance
+otherwise. The mount targets the SSH config's Host alias so the Kubernetes
+proxy stanza applies; it never connects by raw cluster IP. With several
+SkyPilot hosts present, pass `--host` (the listing labels the most recent and
+the currently mounted one). Already-mounted and not-mounted are graceful
+no-op exits; a non-empty or otherwise-occupied mount point is refused.
+`npa skypilot unmount` detaches it; a busy mount is reported with the lazy
+`fusermount3 -u -z` hint rather than forced. An `--isolated-config-dir`
+submission keeps its SSH state under that directory's home, not `~`.
+
 ## Known SkyPilot 0.12.2 Limits
 
 - Raw SkyPilot `envs` does not support self-referencing variable interpolation.
