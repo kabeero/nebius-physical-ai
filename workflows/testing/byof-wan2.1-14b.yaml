@@ -1,7 +1,7 @@
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 metadata:
-  name: byof-wan2.1-14b
+  name: byof-wan2-1-14b
   description: Native wan2.1-14b GPU text-to-video capability. Build the pinned BYOF runtime and bind
     its immutable digest; weights remain runtime-only.
 config:
