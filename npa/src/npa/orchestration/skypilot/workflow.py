@@ -43,6 +43,7 @@ from npa.orchestration.skypilot.diagnostics import (
     diagnose_skypilot_output,
 )
 from npa.orchestration.skypilot.json_output import (
+    _without_allowed_clouds_warning,
     is_verified_empty_queue_result,
     parse_single_json_document,
     queue_rows_from_output,
@@ -4782,7 +4783,8 @@ def _wait_for_healthy_jobs_controller(
             "controller pod cannot resolve its working directory. Inspect/cancel "
             "the exact workflow with `npa workbench workflow status|cancel`, then "
             "repair the shared controller with `npa skypilot cleanup-controller` "
-            "and resume the same run ID."
+            "and resume the same run ID.",
+            launch_attempted=False,
         )
 
     deadline = time.monotonic() + max(timeout, 0)
@@ -4855,7 +4857,8 @@ def _wait_for_healthy_jobs_controller(
             detail = _redact_private_text(_command_detail(result), redactions)
             raise SkyPilotSubmitError(
                 f"SkyPilot controller health check failed: {detail}"
-                + _controller_health_remedy(detail)
+                + _controller_health_remedy(detail),
+                launch_attempted=False,
             )
         controllers = _jobs_controller_statuses(result.stdout)
         # A prior queue read can create exactly one INIT row before a controller
@@ -4924,7 +4927,8 @@ def _wait_for_healthy_jobs_controller(
                         raise SkyPilotSubmitError(
                             "SkyPilot controller execution health is ambiguous: "
                             "multiple ready jobs controllers are cached and no exact "
-                            "SKYPILOT_USER_ID selects one. Refusing to probe or launch."
+                            "SKYPILOT_USER_ID selects one. Refusing to probe or launch.",
+                            launch_attempted=False,
                         )
                 probe_result = checked_execution_probe(state, expected_name)
                 if (
@@ -4962,7 +4966,8 @@ def _wait_for_healthy_jobs_controller(
             )
             raise SkyPilotSubmitError(
                 "SkyPilot jobs controller not healthy before launch: "
-                f"{_redact_private_text(last_summary, redactions)}.{remedy}"
+                f"{_redact_private_text(last_summary, redactions)}.{remedy}",
+                launch_attempted=False,
             )
         time.sleep(max(interval, 0.1))
 
@@ -5090,7 +5095,8 @@ def _jobs_controller_statuses(output: str) -> list[tuple[str, str]]:
     payload = _json_payload_from_output(output)
     if payload is None:
         raise SkyPilotSubmitError(
-            "SkyPilot controller health check returned non-json output"
+            "SkyPilot controller health check returned non-json output",
+            launch_attempted=False,
         )
     raw_clusters: Any
     if isinstance(payload, list):
@@ -5113,7 +5119,12 @@ def _jobs_controller_statuses(output: str) -> list[tuple[str, str]]:
 
 
 def _json_payload_from_output(output: str) -> Any | None:
-    return parse_single_json_document(output)
+    # SkyPilot 0.12.2 prints the pinned allowed_clouds client/server notice on
+    # stdout ahead of status JSON when the per-submit client config differs
+    # from the long-lived API server's config.  The queue parser already
+    # admits exactly this leading notice; the controller health check parses
+    # the same CLI stream and must admit it too.
+    return parse_single_json_document(_without_allowed_clouds_warning(output))
 
 
 def _load_yaml_documents(path: Path) -> tuple[bytes, list[dict[str, Any]]]:
