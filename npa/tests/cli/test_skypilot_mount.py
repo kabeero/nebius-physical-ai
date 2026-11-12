@@ -286,6 +286,10 @@ def test_mount_success_uses_host_alias_and_sky_logs(
     ]
     assert f"mounted {_ALIAS}:sky_logs" in _flat(result.output)
     assert "npa skypilot unmount" in _flat(result.output)
+    # Plain (non-TTY) output must never leak rich markup tags.
+    assert "[cyan]" not in result.output
+    assert "[green]" not in result.output
+    assert "[/dim]" not in result.output
 
 
 def test_mount_honors_explicit_host_and_mount_point(

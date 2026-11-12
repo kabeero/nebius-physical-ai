@@ -34,6 +34,10 @@ app = typer.Typer(
 )
 
 console = Console(stderr=True)
+# Styled informational output on stdout; `console` stays on stderr for errors.
+# Both strip markup when stdout is not a terminal, so plain-text output and
+# tests are unchanged.
+info_console = Console()
 
 SKYPILOT_VERSION = REQUIRED_SKYPILOT_VERSION
 UTC = timezone.utc
@@ -569,6 +573,7 @@ def _format_host_choices(
 ) -> str:
     """Render host candidates newest first, tagging the mounted/most recent."""
 
+    tag_styles = {"mounted": "yellow", "most recent": "green"}
     newest_alias = (
         max(hosts, key=lambda candidate: candidate.mtime).alias if hosts else None
     )
@@ -580,8 +585,13 @@ def _format_host_choices(
         if len(hosts) > 1 and candidate.alias == newest_alias:
             tags.append("most recent")
         stamp = datetime.fromtimestamp(candidate.mtime).strftime("%Y-%m-%d %H:%M")
-        suffix = f" ({', '.join(tags)})" if tags else ""
-        lines.append(f"  {candidate.alias} — modified {stamp}{suffix}")
+        suffix = ""
+        if tags:
+            colored = ", ".join(f"[{tag_styles[tag]}]{tag}[/]" for tag in tags)
+            suffix = f" ({colored})"
+        lines.append(
+            f"  [cyan]{candidate.alias}[/cyan] [dim]— modified {stamp}[/dim]{suffix}"
+        )
     return "\n".join(lines)
 
 
@@ -612,8 +622,8 @@ def _select_mount_host(hosts: list[SkySshHost], host: str) -> SkySshHost | None:
     if len(hosts) == 1:
         return hosts[0]
     _fail(
-        "Multiple SkyPilot SSH configs found; pass --host to choose one:\n"
-        + _format_host_choices(hosts)
+        "[bold]Multiple SkyPilot SSH configs found[/bold]; pass --host to choose "
+        "one:\n" + _format_host_choices(hosts)
     )
     return None
 
@@ -669,16 +679,17 @@ def mount_cmd(
     target = mount_point or _default_mount_point()
     state = _mount_state(target)
     if state.status == "sshfs":
-        typer.echo(f"{target} is already mounted over sshfs.")
+        info_console.print(f"{target} is [yellow]already mounted[/yellow] over sshfs.")
         if state.host:
-            typer.echo(f"mounted host: {state.host}")
+            info_console.print(f"mounted host: [cyan]{state.host}[/cyan]")
         if len(hosts) > 1:
-            typer.echo("available SkyPilot SSH hosts:")
-            typer.echo(_format_host_choices(hosts, mounted_alias=state.host))
+            info_console.print("[dim]available SkyPilot SSH hosts:[/dim]")
+            info_console.print(_format_host_choices(hosts, mounted_alias=state.host))
             if host and host != state.host:
-                typer.echo(
-                    f"to switch to {host}: `npa skypilot unmount`, then "
-                    f"`npa skypilot mount --host {host}`."
+                info_console.print(
+                    f"[dim]to switch to[/dim] [cyan]{host}[/cyan][dim]: "
+                    "`npa skypilot unmount`, then `npa skypilot mount "
+                    f"--host {host}`.[/dim]"
                 )
         return
     if state.status == "other":
@@ -712,7 +723,10 @@ def mount_cmd(
         return
 
     target.mkdir(parents=True, exist_ok=True)
-    typer.echo(f"mounting {selected.alias}:{SSHFS_REMOTE_DIR} -> {target} ...")
+    info_console.print(
+        f"mounting [cyan]{selected.alias}:{SSHFS_REMOTE_DIR}[/cyan] "
+        f"[dim]->[/dim] {target} [dim]...[/dim]"
+    )
     result = _run_mount_tool(
         [sshfs_bin, f"{selected.alias}:{SSHFS_REMOTE_DIR}", str(target)],
         timeout=SSHFS_MOUNT_TIMEOUT,
@@ -725,8 +739,11 @@ def mount_cmd(
             "or cluster terminated); check `npa workbench workflow status`."
         )
         return
-    typer.echo(f"mounted {selected.alias}:{SSHFS_REMOTE_DIR} at {target}")
-    typer.echo("unmount with: npa skypilot unmount")
+    info_console.print(
+        f"[green]mounted[/green] "
+        f"[cyan]{selected.alias}:{SSHFS_REMOTE_DIR}[/cyan] at {target}"
+    )
+    info_console.print("[dim]unmount with: npa skypilot unmount[/dim]")
 
 
 @app.command("unmount")
@@ -742,7 +759,7 @@ def unmount_cmd(
     target = mount_point or _default_mount_point()
     state = _mount_state(target)
     if state.status == "none":
-        typer.echo(f"{target} is not mounted.")
+        info_console.print(f"{target} is [blue]not mounted[/blue].")
         return
     if state.status != "sshfs":
         _fail(
@@ -774,8 +791,8 @@ def unmount_cmd(
             )
         _fail(f"could not unmount {target}: {detail}. {hint}")
         return
-    suffix = f" (host {state.host})" if state.host else ""
-    typer.echo(f"unmounted {target}{suffix}")
+    suffix = f" (host [cyan]{state.host}[/cyan])" if state.host else ""
+    info_console.print(f"[green]unmounted[/green] {target}{suffix}")
 
 
 @app.command("cleanup-controller")
