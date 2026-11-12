@@ -138,6 +138,23 @@ def load_spec(path: str | Path) -> NpaWorkflowSpec:
         data = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
         raise NpaWorkflowError(f"workflow spec is not valid YAML: {exc}") from exc
+    return load_spec_document(data)
+
+
+def load_spec_document(data: Any) -> NpaWorkflowSpec:
+    """Validate and load one already-parsed npa.workflow document.
+
+    Shares ``load_spec``'s validation pipeline for callers that already hold
+    the parsed YAML, so a document is parsed from text exactly once.
+
+    Args:
+        data: Parsed workflow document (the object under ``apiVersion``).
+    Returns:
+        The validated workflow spec.
+    Raises:
+        NpaWorkflowError: The document is not a workflow spec mapping or
+          fails spec or schema validation.
+    """
     if not isinstance(data, dict):
         raise NpaWorkflowError(
             f"workflow spec must be a mapping, got {type(data).__name__}"

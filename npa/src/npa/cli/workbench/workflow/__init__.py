@@ -33,6 +33,7 @@ from npa.cli.workbench.workflow.demo import app as demo_app
 from npa.cli.workbench.workflow.batch import app as batch_app
 from npa.cli.workbench.workflow.input_check import check_input_cmd
 from npa.cli.workbench.workflow.absence_recovery import register as register_absence
+from npa.cli.workbench.workflow.catalog import register as register_catalog
 from npa.cli.workbench.workflow.challenge import app as challenge_app
 from npa.cli.workbench.workflow.controller_recovery import (
     register as register_controller_recovery,
@@ -11177,3 +11178,4 @@ app.add_typer(demo_app, name="demo")
 app.add_typer(challenge_app, name="challenge")
 register_controller_recovery(app)
 register_absence(app)
+register_catalog(app)

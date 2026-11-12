@@ -66,6 +66,20 @@ def _is_npa_workflow_spec(path: Path) -> bool:
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         return False
+    return is_npa_workflow_document(payload)
+
+
+def is_npa_workflow_document(payload: object) -> bool:
+    """Whether an already-parsed YAML document is an ``npa.workflow`` spec.
+
+    Args:
+        payload: Parsed YAML object (typically from ``yaml.safe_load``).
+    Returns:
+        True when the document declares a supported ``npa.workflow`` api
+        version.
+    Raises:
+        None.
+    """
     return isinstance(payload, dict) and str(payload.get("apiVersion", "")).startswith(
         "npa.workflow/"
     )
