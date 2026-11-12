@@ -159,6 +159,18 @@ working directory, stops only that session's API, and reports success after
 local shutdown is verified. Bare legacy checks and native Nebius verification
 retain their existing behavior.
 
+`sky check` probes every cloud it knows, including optional clouds NPA never
+enables. Upstream probes can leak an interpreter traceback for those clouds
+(SkyPilot 0.12.2's DigitalOcean adaptor probes `azure.core.exceptions` because
+`pydo` inherits Azure's exceptions, and `importlib` raises instead of returning
+`None` when the top-level `azure` package is absent). `npa skypilot verify`
+condenses such a traceback into a one-line reason (`missing optional skypilot
+dependency '<module>' (traceback filtered)`) when it originates in upstream
+`sky/adaptors/` code and is a `ModuleNotFoundError`. Tracebacks from any other
+path — including Kubernetes or Nebius failures — always pass through
+unchanged, and the isolated venv intentionally does not install the azure
+package: the dependency is only needed for clouds NPA does not use.
+
 Targeted `npa workbench workflow gpus --context <context>` (also `--cluster` or
 `KUBECONTEXT`) uses the same owned check-only lifecycle. Its optional
 `--isolated-config-dir` precedes the environment/saved root, and `--project`
