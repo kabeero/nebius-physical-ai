@@ -60,6 +60,64 @@ npa workbench workflow plan-spec workflows/testing/cosmos3-generate.yaml --run-i
 Expect a valid spec and one `generate` stage. Its bucket is a placeholder;
 validation and planning do not verify model access, stage data, or reserve GPUs.
 
+### Catalog listing
+
+List every discovered spec as tiered tables (`main`, `testing`, `partners`,
+`cosmos-data-factory`), one row per workflow:
+
+```bash
+npa workbench workflow catalog                 # all tiers as tables
+npa workbench workflow catalog --tier testing  # one tier
+npa workbench workflow catalog --json          # machine-readable rows
+```
+
+Each row reports the spec's **declared contract**, never a run guarantee: the
+application category (keyword lookup over the file name, workflow name, and
+description), `CPU`/`GPU`/`CPU+GPU` modality, the largest declared CPU and
+memory requests, GPU cloud and accelerator summary (`8x B200` style, with
+simple `{{config.*}}` templates resolved against the spec's own defaults), the
+phase count (`parallel:` fan-outs collapse to one phase; loops never
+multiply), `✓` flags for declared stage inputs, outputs, and persistent-volume
+caches, and a one-to-five star `★` operating-complexity heuristic from phase
+count, GPU count, loops, fan-out width, multi-node stages, and PVC use.
+Partners-tier rows lead with a `Partner` column naming the owning partner
+directory under `partners/` (for example `antioch` or `encord`) and group by
+it; the same value appears as the `partner` field of `--json` rows and is
+empty for every other tier.
+The `sim2real-two-step-agent.yaml` golden snapshot is excluded: it duplicates
+`sim2real-two-step.yaml` and exists for the agent generator-equality test.
+Rows whose `metadata.name` differs from the file name show the file name in
+parentheses; a blank cell means the spec declares nothing for that column.
+
+### Catalog filtering
+
+Narrow the same rows to workflows you can actually run. In a terminal the
+command asks three questions — application category, GPU (an accelerator
+name, any GPU, or CPU only), and whether you have already created an RWX
+PVC — each accepting a blank answer for no filter:
+
+```bash
+npa workbench workflow filter
+```
+
+Answering that no PVC exists hides workflows that declare one, because
+Kubernetes will not schedule their pods until the named claim is bound.
+The result is a short table (name, application, GPU type, PVC, complexity,
+file) sorted by workflow name. Every question can instead be answered with
+a flag, which also makes the command scriptable:
+
+```bash
+npa workbench workflow filter --application robotics-policy --no-pvc
+npa workbench workflow filter --gpu B200 --tier main
+npa workbench workflow filter --gpu none --json   # filters echoed with rows
+```
+
+`--application` accepts `uncategorized` for rows the keyword lookup leaves
+blank; `--gpu` accepts `any`, `none`, or an accelerator name with the count
+stripped (`B200`, not `8x B200`). Running `filter` with no flags and no
+terminal fails with the flag forms rather than printing the full table;
+use `catalog` for that.
+
 Workflows that pass an image into provenance or native child launches declare
 `config.required_immutable_images: [<config-key>, ...]`. Supply each key through
 `--var <config-key>=<registry>/<repository>@sha256:<64-hex-digest>` when planning

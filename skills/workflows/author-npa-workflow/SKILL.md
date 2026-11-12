@@ -156,12 +156,22 @@ npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id demo --check
 npa/.venv/bin/npa workbench workflow run-spec <spec.yaml> --plan-only --scheduler-plan --json
 npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo --plan-only
 npa/.venv/bin/npa workbench workflow submit <spec.yaml> --run-id demo
+npa/.venv/bin/npa workbench workflow catalog [--tier <tier>] [--json]
 ```
 
 `submit` accepts both `npa.workflow/v0.0.1` specs and legacy SkyPilot YAMLs.
 For npa.workflow specs it plans → renders serial SkyPilot YAML → `sky jobs launch`.
 Use `--plan-only` to inspect the rendered YAML without launching. Dynamic
 branches still need `--assume-decision`.
+
+`catalog` lists every discovered spec as tiered tables (see the
+[catalog listing](../../../workflows/README.md#catalog-listing) reference). After
+adding or promoting a spec, run it and confirm the new row lands in the
+intended tier with a non-blank application category: a blank cell means the
+`APPLICATION_LUT` keyword table in
+`npa/src/npa/orchestration/npa_workflow/catalog_index.py` needs a matching
+keyword, and the catalog guardrail fails the build until it does. A row is the
+spec's declared contract, not a run guarantee.
 
 Use `plan-spec --check-render` during authoring. It exercises the production
 SkyPilot renderer locally with registry-secret materialization disabled, so pod

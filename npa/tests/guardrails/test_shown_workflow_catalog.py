@@ -10,10 +10,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
+from npa.orchestration.npa_workflow.blueprints import (
+    iter_npa_workflow_specs,
+    resolve_npa_workflow_spec,
+)
 from npa.orchestration.npa_workflow.catalog import (
     PUBLIC_REUSABLE_TOOLREFS,
     TOOL_CATALOG,
+)
+from npa.orchestration.npa_workflow.catalog_index import (
+    CATALOG_DISPLAY_EXCLUSIONS,
+    index_catalog,
 )
 from npa.orchestration.npa_workflow.detect import detect_submit_format
 from npa.orchestration.npa_workflow.spec import load_spec
@@ -76,3 +83,32 @@ def test_tool_catalog_is_reachable_or_explicitly_public_reusable() -> None:
     )
     assert set(TOOL_CATALOG) == reachable | reusable
     assert all(PUBLIC_REUSABLE_TOOLREFS.values())
+
+
+def test_catalog_application_lut_covers_every_shown_spec() -> None:
+    entries = index_catalog()
+    assert entries, "expected the catalog command to find specs"
+    unmatched = sorted(
+        f"{row.tier}: {row.name} ({row.rel_path})"
+        for rows in entries.values()
+        for row in rows
+        if not row.application
+    )
+    assert not unmatched, (
+        "Every shown catalog spec must match an APPLICATION_LUT category so "
+        "the catalog command stays informative. Extend the keyword table in "
+        "npa/orchestration/npa_workflow/catalog_index.py for:\n"
+        + "\n".join(unmatched)
+    )
+
+
+def test_catalog_display_exclusions_stay_real_specs() -> None:
+    # Exclusions hide golden snapshots from the operator listing; they must
+    # still exist as loadable npa.workflow specs or the exclusion is stale.
+    for file_name in CATALOG_DISPLAY_EXCLUSIONS:
+        path = resolve_npa_workflow_spec(file_name)
+        assert path is not None and path.name == file_name, (
+            f"catalog exclusion {file_name!r} no longer resolves to a spec; "
+            "remove it from CATALOG_DISPLAY_EXCLUSIONS"
+        )
+        assert detect_submit_format(path) == "npa.workflow"
